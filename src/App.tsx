@@ -130,11 +130,37 @@ function money(value: number) { return `₹${value.toLocaleString("en-IN")}`; }
 function clock(value: string) { return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
 function shortDate(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value)); }
 function dateTime(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function orderFromDatabase(row: Record<string, unknown>): Order {
+  const rawItems = Array.isArray(row.items) ? row.items : [];
+  const items = rawItems.flatMap((item) => {
+    if (typeof item === "object" && item !== null) {
+      const value = item as { name?: unknown; quantity?: unknown };
+      return typeof value.name === "string" ? [{ name: value.name, quantity: Number(value.quantity) || 1 }] : [];
+    }
+    return typeof item === "string" ? [{ name: item, quantity: 1 }] : [];
+  });
+  const rawPayment = String(row.payment_method ?? row.payment ?? "COD").toUpperCase();
+  const rawStatus = String(row.status ?? "New");
+  const statuses: Order["status"][] = ["New", "Preparing", "Ready", "Delivered"];
+  return {
+    id: String(row.order_ref ?? row.id ?? "ORDER"),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+    student: String(row.student_name ?? row.student ?? "Student"),
+    phone: String(row.student_phone ?? row.phone ?? ""),
+    hostel: String(row.hostel ?? ""),
+    items,
+    total: Number(row.total ?? 0),
+    payment: rawPayment === "UPI" ? "UPI" : "COD",
+    upiApp: typeof row.upi_app === "string" && row.upi_app ? row.upi_app as UpiApp : undefined,
+    paymentStatus: String(row.payment_status ?? "Pending").toLowerCase() === "paid" ? "Paid" : "Pending",
+    status: statuses.includes(rawStatus as Order["status"]) ? rawStatus as Order["status"] : "New",
+  };
+}
 
 function MiniCup() { return <span className="mini-cup"><i /><b /></span>; }
 function Brand({ owner = false, student = true, studentName = "Vishwa S" }: { owner?: boolean; student?: boolean; studentName?: string }) { return <div className="legacy-brand"><MiniCup /><div><strong>Coke Station</strong><small>{owner ? "OWNER DASHBOARD" : student ? `👋 ${studentName.toUpperCase()}` : "Hostel Night Canteen"}</small></div></div>; }
 function Modal({ title, subtitle, onClose, children, wide = false, className = "" }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode; wide?: boolean; className?: string }) { return <div className="dark-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className={`dark-modal ${wide ? "wide" : ""} ${className}`}><div className="dark-modal-header"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="dark-close" onClick={onClose}><Icon name="close" size={17} /></button></div>{children}</div></div>; }
-function PrimaryButton({ children, onClick, type = "button", className = "" }: { children: ReactNode; onClick?: () => void; type?: "button" | "submit"; className?: string }) { return <button type={type} onClick={onClick} className={`red-button ${className}`}>{children}</button>; }
+function PrimaryButton({ children, onClick, type = "button", className = "", disabled = false }: { children: ReactNode; onClick?: () => void; type?: "button" | "submit"; className?: string; disabled?: boolean }) { return <button type={type} onClick={onClick} disabled={disabled} className={`red-button ${className}`}>{children}</button>; }
 
 function Landing({ onStudent, onOwner }: { onStudent: () => void; onOwner: () => void }) {
   return <div className="auth-page"><div className="auth-brand"><MiniCup /><h1>Coke Station</h1><p>Hostel Night Canteen · Open 7PM onwards</p><span className="phone-badge">📱 &nbsp;Phone + Password Login</span></div><div className="who-label">Who are you?</div><div className="auth-choice"><PrimaryButton onClick={onStudent}>🎓 Student Login <Icon name="arrow" size={17} /></PrimaryButton><button className="owner-login-button" onClick={onOwner}>🏪 Shop Owner Login <Icon name="arrow" size={17} /></button></div></div>;
@@ -295,14 +321,26 @@ function StudentMenu({ menu, cart, shopOpen, profile, onUpdatePassword, onAdd, o
   return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><div className="hostel-bar"><span>🏠</span><select value={hostel} onChange={(event) => setHostel(event.target.value)}><HostelOptions /></select>{selectedHostel && <div className="hostel-location"><span>📍 {selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined ? `${selectedHostel.latitude.toFixed(6)}, ${selectedHostel.longitude.toFixed(6)}` : "GPS location not added yet"}</span>{selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined && <a href={`https://www.google.com/maps?q=${selectedHostel.latitude},${selectedHostel.longitude}`} target="_blank" rel="noreferrer">View map</a>}</div>}</div><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">No items in this category.</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => onCheckout(hostel)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
-function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void }) {
+function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
   const [hostel, setHostel] = useState(initialHostel);
   const [payment, setPayment] = useState<PaymentMethod>("COD");
   const [upiApp, setUpiApp] = useState<UpiApp>("Google Pay");
+  const [placing, setPlacing] = useState(false);
+  const [error, setError] = useState("");
   const selectedHostel = hostels.find((item) => item.name === hostel);
   const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   const apps: { name: UpiApp; icon: string }[] = [{ name: "Google Pay", icon: "G" }, { name: "PhonePe", icon: "पे" }, { name: "Paytm", icon: "P" }, { name: "Other apps", icon: "•••" }];
-  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={(event) => { event.preventDefault(); onPlace({ hostel, phone: profile.phone, payment, upiApp: payment === "UPI" ? upiApp : undefined }); }}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div>{selectedHostel && <p className="checkout-hostel-location">📍 Delivery pin: {selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined ? `${selectedHostel.latitude.toFixed(6)}, ${selectedHostel.longitude.toFixed(6)}` : "GPS location not added yet"}</p>}<h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">Pay to <b>{upiId}</b> · You’ll be taken to {upiApp} after placing the order.</p></div>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width">Place order <Icon name="arrow" size={16} /></PrimaryButton></form></Modal>;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    setPlacing(true);
+    try {
+      await onPlace({ hostel, phone: profile.phone, payment, upiApp: payment === "UPI" ? upiApp : undefined });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The order could not be placed. Please try again.");
+    } finally { setPlacing(false); }
+  };
+  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div>{selectedHostel && <p className="checkout-hostel-location">📍 Delivery pin: {selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined ? `${selectedHostel.latitude.toFixed(6)}, ${selectedHostel.longitude.toFixed(6)}` : "GPS location not added yet"}</p>}<h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">Pay to <b>{upiId}</b> · You’ll be taken to {upiApp} after placing the order.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
 }
 function OrderPlacedModal({ order, onClose }: { order: Order; onClose: () => void }) {
   return <Modal title="✅ Order placed" subtitle="Your order has been sent to the shop owner." onClose={onClose}>
@@ -635,7 +673,33 @@ export default function App() {
   };
   const addToCart = (item: MenuItem) => { if (!item.available) return notify(`${item.name} is out of stock`); setCart((current) => { const found = current.find((row) => row.item.id === item.id); return found ? current.map((row) => row.item.id === item.id ? { ...row, quantity: row.quantity + 1 } : row) : [...current, { item, quantity: 1 }]; }); };
   const changeQuantity = (id: string, delta: number) => setCart((current) => current.map((row) => row.item.id === id ? { ...row, quantity: row.quantity + delta } : row).filter((row) => row.quantity > 0));
-  const placeOrder = (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => { const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0); const order: Order = { id: `CS-${1049 + orders.length}`, createdAt: new Date().toISOString(), student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" }; setOrders((current) => [order, ...current]); setCart([]); setCheckoutOpen(false); setOrderPlaced(order); };
+  const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
+    const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
+    const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
+    let savedOrder = order;
+    if (supabase && supabaseConfigured) {
+      if (!profile.id) throw new Error("Your session expired. Please log in again.");
+      const { data, error } = await supabase.from("coke_station_orders").insert({
+        order_ref: order.id,
+        student_id: profile.id,
+        student_name: order.student,
+        student_phone: order.phone,
+        hostel: order.hostel,
+        items: order.items,
+        total: order.total,
+        payment_method: order.payment,
+        upi_app: order.upiApp || null,
+        payment_status: order.paymentStatus,
+        status: order.status,
+      }).select("*").single();
+      if (error) throw new Error(error.code === "42P01" || error.code === "PGRST205" ? "Orders backend is not installed yet. Run supabase/ORDERS_BACKEND.sql." : error.message);
+      if (data && typeof data === "object") savedOrder = orderFromDatabase(data as Record<string, unknown>);
+    }
+    setOrders((current) => [savedOrder, ...current]);
+    setCart([]);
+    setCheckoutOpen(false);
+    setOrderPlaced(savedOrder);
+  };
   const scratch = () => { if (orders.length) { const online = orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); const cod = orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); setShifts((current) => [{ id: `shift-${Date.now()}`, openedAt: new Date(Date.now() - 2 * 3600000).toISOString(), closedAt: new Date().toISOString(), orderCount: orders.length, online, cod, total: online + cod, pending: orders.filter((order) => order.paymentStatus === "Pending").length }, ...current]); } setOrders([]); notify("Shift counters reset to zero"); };
   const toggleShop = async () => {
     const nextStatus = !shopOpen;
@@ -670,9 +734,47 @@ export default function App() {
     }
     notify("Payment settings saved");
   };
-  const nextStatus = (id: string) => setOrders((current) => current.map((order) => { if (order.id !== id) return order; const status = order.status === "New" ? "Preparing" : order.status === "Preparing" ? "Ready" : "Delivered"; return { ...order, status, paymentStatus: status === "Delivered" && order.payment === "COD" ? "Paid" : order.paymentStatus }; }));
-  const confirmPayment = (id: string) => { setOrders((current) => current.map((order) => order.id === id ? { ...order, paymentStatus: "Paid" } : order)); notify("Payment accepted"); };
+  const syncOwnerOrder = async (orderRef: string, status: Order["status"], paymentStatus: Order["paymentStatus"]) => {
+    if (!supabase || !ownerPin) return;
+    const { data, error } = await supabase.rpc("owner_update_coke_station_order", { p_order_ref: orderRef, p_status: status, p_payment_status: paymentStatus, p_pin: ownerPin });
+    const ordersBackendMissing = error && ["42883", "PGRST202", "42P01"].includes(error.code || "");
+    if ((error && !ordersBackendMissing) || data === false) notify(error?.message || "Order update was not saved");
+    else if (ordersBackendMissing) notify("Updated on this device — run ORDERS_BACKEND.sql to sync the owner dashboard");
+  };
+  const nextStatus = (id: string) => {
+    const order = orders.find((item) => item.id === id);
+    if (!order) return;
+    const status: Order["status"] = order.status === "New" ? "Preparing" : order.status === "Preparing" ? "Ready" : "Delivered";
+    const paymentStatus: Order["paymentStatus"] = status === "Delivered" && order.payment === "COD" ? "Paid" : order.paymentStatus;
+    setOrders((current) => current.map((item) => item.id === id ? { ...item, status, paymentStatus } : item));
+    void syncOwnerOrder(id, status, paymentStatus);
+  };
+  const confirmPayment = (id: string) => {
+    const order = orders.find((item) => item.id === id);
+    if (!order) return;
+    setOrders((current) => current.map((item) => item.id === id ? { ...item, paymentStatus: "Paid" } : item));
+    void syncOwnerOrder(id, order.status, "Paid");
+    notify("Payment accepted");
+  };
   const deleteShift = (id: string) => { if (window.confirm("Delete this history record? This cannot be undone.")) { setShifts((current) => current.filter((shift) => shift.id !== id)); notify("History record deleted"); } };
+  const fetchStudentOrders = async () => {
+    if (!supabase || !profile.id) return;
+    const { data, error } = await supabase.from("coke_station_orders").select("*").eq("student_id", profile.id).order("created_at", { ascending: false });
+    if (!error && data) setOrders((data as Record<string, unknown>[]).map(orderFromDatabase));
+  };
+  const fetchOwnerOrders = async () => {
+    if (!supabase || !ownerPin) return;
+    const { data, error } = await supabase.rpc("owner_get_coke_station_orders", { p_pin: ownerPin });
+    if (!error && data) setOrders((data as Record<string, unknown>[]).map(orderFromDatabase));
+  };
+  useEffect(() => {
+    if (!supabase) return;
+    const loadOrders = screen === "owner-dashboard" && ownerPin ? fetchOwnerOrders : screen === "student-menu" && profile.id ? fetchStudentOrders : null;
+    if (!loadOrders) return;
+    void loadOrders();
+    const timer = window.setInterval(() => { void loadOrders(); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [screen, ownerPin, profile.id]);
 
   let screenContent: ReactNode;
   if (screen === "landing") screenContent = <Landing onStudent={() => setScreen("student-login")} onOwner={() => setScreen("owner-pin")} />;
