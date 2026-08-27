@@ -1,0 +1,18 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Generated/temporary workspace files
+contact.jpg
+old-index.css
+backup-redesign/
+uploads/
+*.log
+.DS_Store
+
+.npm/
