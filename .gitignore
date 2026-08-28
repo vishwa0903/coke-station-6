@@ -20,3 +20,6 @@ uploads/
 coke-station-github.zip
 
 *.zip
+
+*.tar.gz
+*.b64

@@ -48,6 +48,9 @@ const hostels: Hostel[] = [
   { name: "Beryl", gender: "Girls Hostel", latitude: 10.762089234457777, longitude: 78.81746592790621 },
 ];
 const emptyProfile: StudentProfile = { name: "Vishwa S", phone: "", hostel: "", room: "" };
+function isHostedEnvironment() {
+  return typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname);
+}
 function normalizeIndianPhone(value: string) {
   const digits = value.replace(/\D/g, "");
   const tenDigits = digits.startsWith("91") && digits.length > 10 ? digits.slice(-10) : digits;
@@ -707,7 +710,8 @@ export default function App() {
     const phone = normalizeIndianPhone(input.phone);
     if (!/^\+91\d{10}$/.test(phone)) throw new Error("Enter a valid 10-digit Indian mobile number.");
     if (!supabaseConfigured || !supabase) {
-      // Keeps the reference UI usable until the public anon key is added.
+      if (isHostedEnvironment()) throw new Error("Cloud backend is not configured on this deployment. Add VITE_SUPABASE_ANON_KEY in Netlify and redeploy.");
+      // Keeps the reference UI usable locally until the public anon key is added.
       setProfile({ ...emptyProfile, name: input.name || "Vishwa S", phone });
       setScreen("student-menu");
       notify("Demo account loaded — connect Supabase for saved accounts");
@@ -793,6 +797,7 @@ export default function App() {
   const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
     const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
     const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), studentId: profile.id, student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
+    if (isHostedEnvironment() && (!supabase || !supabaseConfigured)) throw new Error("Cloud backend is not configured. Ask the owner to add the Supabase environment variables in Netlify.");
     let savedOrder = order;
     if (supabase && supabaseConfigured) {
       if (!profile.id) throw new Error("Your session expired. Please log in again.");
