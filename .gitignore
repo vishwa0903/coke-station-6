@@ -18,3 +18,5 @@ uploads/
 .npm/
 
 coke-station-github.zip
+
+*.zip

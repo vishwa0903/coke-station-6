@@ -24,6 +24,12 @@ create table if not exists public.coke_station_orders (
 create index if not exists coke_station_orders_student_idx on public.coke_station_orders(student_id, created_at desc);
 create index if not exists coke_station_orders_created_idx on public.coke_station_orders(created_at desc);
 
+-- Keep older installations compatible while allowing the full history status set.
+alter table public.coke_station_orders drop constraint if exists coke_station_orders_payment_status_check;
+alter table public.coke_station_orders add constraint coke_station_orders_payment_status_check check (payment_status in ('Pending', 'Paid', 'Failed', 'Cancelled'));
+alter table public.coke_station_orders drop constraint if exists coke_station_orders_status_check;
+alter table public.coke_station_orders add constraint coke_station_orders_status_check check (status in ('New', 'Preparing', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'));
+
 alter table public.coke_station_orders enable row level security;
 
 drop policy if exists "Students can insert their own orders" on public.coke_station_orders;
@@ -70,10 +76,13 @@ as $$
   order by o.created_at desc;
 $$;
 
+drop function if exists public.owner_update_coke_station_order(text, text, text, text);
+
 create or replace function public.owner_update_coke_station_order(
   p_order_ref text,
   p_status text,
   p_payment_status text,
+  p_payment_method text,
   p_pin text
 )
 returns boolean
@@ -85,16 +94,20 @@ begin
   if p_pin <> 'coke123' then
     return false;
   end if;
-  if p_status not in ('New', 'Preparing', 'Ready', 'Delivered') then
+  if p_status not in ('New', 'Preparing', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled') then
     return false;
   end if;
-  if p_payment_status not in ('Pending', 'Paid') then
+  if p_payment_status not in ('Pending', 'Paid', 'Failed', 'Cancelled') then
+    return false;
+  end if;
+  if p_payment_method not in ('COD', 'UPI') then
     return false;
   end if;
 
   update public.coke_station_orders
      set status = p_status,
-         payment_status = p_payment_status
+         payment_status = p_payment_status,
+         payment_method = p_payment_method
    where order_ref = p_order_ref;
 
   return found;
@@ -102,8 +115,8 @@ end;
 $$;
 
 revoke all on function public.owner_get_coke_station_orders(text) from public;
-revoke all on function public.owner_update_coke_station_order(text, text, text, text) from public;
+revoke all on function public.owner_update_coke_station_order(text, text, text, text, text) from public;
 grant execute on function public.owner_get_coke_station_orders(text) to anon, authenticated;
-grant execute on function public.owner_update_coke_station_order(text, text, text, text) to anon, authenticated;
+grant execute on function public.owner_update_coke_station_order(text, text, text, text, text) to anon, authenticated;
 
 select 'Coke Station shared orders installed successfully' as result;

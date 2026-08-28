@@ -359,3 +359,64 @@ input, select { outline: none; }
   .delivery-online-body { align-items: flex-start; }
   .delivery-online-body img, .delivery-online-body > .fake-qr-grid { width: 87px; height: 87px; }
 }
+
+/* Student order history */
+.student-history-content { padding: 16px 17px 22px; }
+.student-history-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.student-history-summary > div { min-height: 91px; padding: 13px; border: 1px solid #302c3b; border-radius: 12px; background: #181620; }
+.student-history-summary > div > span { display: block; min-height: 20px; font-size: 17px; }
+.student-history-summary small { display: block; margin-top: 9px; color: #8b8495; font-size: 8px; font-weight: 900; letter-spacing: .06em; }
+.student-history-summary strong { display: block; margin-top: 8px; color: #f1ecf0; font-size: 18px; letter-spacing: -.04em; }
+.student-history-summary .history-total-green { color: #20df76; }
+.student-history-summary .history-total-blue { color: #64a5ff; }
+.student-history-summary .history-total-orange { color: #ffb21b; }
+.student-history-note { margin: 13px 2px 5px; color: #85808e; font-size: 9px; line-height: 1.4; }
+.student-history-list { display: grid; gap: 10px; margin-top: 13px; }
+.student-history-card { padding: 15px; border: 1px solid #302c3b; border-radius: 14px; background: #15131c; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.student-history-card:hover { border-color: #50465e; background: #191621; transform: translateY(-1px); }
+.history-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.history-card-top > div:first-child { min-width: 0; }
+.history-card-top > div:first-child > strong, .history-card-top > div:first-child > span, .history-card-top > div:first-child > small { display: block; }
+.history-card-top > div:first-child > strong { color: #f2edf1; font-size: 14px; }
+.history-card-top > div:first-child > span { margin-top: 6px; color: #9a92a3; font-size: 9px; }
+.history-card-top > div:first-child > small { margin-top: 5px; color: #6f687a; font-size: 8px; font-weight: 700; letter-spacing: .06em; }
+.history-card-amount { flex: none; text-align: right; }
+.history-card-amount > strong, .history-card-amount > span { display: block; }
+.history-card-amount > strong { color: #f4eef1; font-size: 16px; letter-spacing: -.03em; }
+.history-payment-status { margin-top: 6px; font-size: 8px; font-weight: 900; letter-spacing: .05em; }
+.history-payment-status.paid { color: #3ee275; }.history-payment-status.pending { color: #f0aa28; }.history-payment-status.failed, .history-payment-status.cancelled { color: #ee696c; }
+.history-item-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding: 11px 0; border-top: 1px dashed #312c3a; border-bottom: 1px dashed #312c3a; }
+.history-item-pills span { padding: 6px 8px; border: 1px solid #302c3a; border-radius: 7px; background: #211e2a; color: #d2cbd5; font-size: 9px; }
+.history-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.history-payment-method, .history-delivery-status { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; padding: 0 8px; border-radius: 6px; font-size: 9px; font-weight: 800; }
+.history-payment-method.cod { color: #f5b637; background: #352715; }.history-payment-method.upi { color: #79adff; background: #1a2a43; }
+.history-delivery-status { color: #a7a0ad; background: #24212b; }.history-delivery-status.delivered { color: #44e57d; background: #153525; }.history-delivery-status.cancelled { color: #f17a7d; background: #351d24; }.history-delivery-status.new, .history-delivery-status.preparing, .history-delivery-status.ready, .history-delivery-status.out-for-delivery { color: #e9b54d; background: #332818; }
+.student-history-empty { min-height: 240px; border: 1px dashed #3a3445; border-radius: 12px; }
+
+@media (max-width: 620px) {
+  .student-history-content { padding: 12px 11px 16px; }
+  .student-history-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .student-history-summary > div { min-height: 82px; padding: 10px; }
+  .student-history-summary strong { font-size: 16px; }
+  .student-history-card { padding: 12px; }
+  .history-card-top { gap: 8px; }
+  .history-card-top > div:first-child > strong { font-size: 12px; }
+  .history-card-amount > strong { font-size: 14px; }
+  .history-card-bottom { align-items: flex-start; flex-direction: column; }
+}
+
+.old-order-status.delivered { color: #b894ff; }
+.old-order-status.delivered i { display: none; }
+.old-order-status.out-for-delivery { color: #74a9ff; }
+.payment-received { color: #25df72 !important; }
+.payment-pending { color: #efb342 !important; }
+.payment-failed, .payment-cancelled { color: #ee6d73 !important; }
+.delivered-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 8px; padding: 0 10px; border: 1px solid #3d354c; border-radius: 8px; background: #211e2b; color: #a69bab; font-size: 9px; font-weight: 900; }
+
+.history-modal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 17px 0; color: #817989; font-size: 9px; }
+.download-excel-button { min-height: 35px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border: 1px solid #2a8b56; border-radius: 7px; background: #142c21; color: #53e27f; font-size: 9px; font-weight: 900; }
+.download-excel-button:hover { background: #1b4830; color: #83f5a4; transform: translateY(-1px); }
+@media (max-width: 620px) {
+  .history-modal-toolbar { align-items: flex-start; flex-direction: column; padding: 12px 11px 0; }
+  .download-excel-button { width: 100%; justify-content: center; }
+}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
+import * as XLSX from "xlsx-js-style";
 
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
 type Category = "All" | "Maggie" | "Eggs" | "Sandwiches" | "Hot Drinks" | "Cold Drinks" | "Snacks";
@@ -10,7 +11,7 @@ type PaymentMethod = "UPI" | "COD";
 type UpiApp = "Google Pay" | "PhonePe" | "Paytm" | "Other apps";
 type PaymentSettings = { upiId: string; qrCode: string | null };
 const defaultPaymentSettings: PaymentSettings = { upiId: "7598981132@fam", qrCode: null };
-type Order = { id: string; createdAt: string; student: string; phone: string; hostel: string; room?: string; items: { name: string; quantity: number }[]; total: number; payment: PaymentMethod; upiApp?: UpiApp; paymentStatus: "Pending" | "Paid"; status: "New" | "Preparing" | "Ready" | "Delivered" };
+type Order = { id: string; createdAt: string; student: string; phone: string; hostel: string; room?: string; studentId?: string; items: { name: string; quantity: number }[]; total: number; payment: PaymentMethod; upiApp?: UpiApp; paymentStatus: "Pending" | "Paid" | "Failed" | "Cancelled"; status: "New" | "Preparing" | "Ready" | "Out for Delivery" | "Delivered" | "Cancelled" };
 type Shift = { id: string; openedAt: string; closedAt?: string; orderCount: number; online: number; cod: number; total: number; pending: number };
 type StudentProfile = { id?: string; name: string; phone: string; hostel: string; room: string };
 type StudentAuthInput = { name: string; phone: string; password: string; register: boolean };
@@ -120,16 +121,17 @@ const defaultMenu: MenuItem[] = [
   { id: "cookies", name: "Chocolate Cookies", category: "Snacks", size: "Pack", price: 25, emoji: "🍪", available: true },
   { id: "brownie", name: "Chocolate Brownie", category: "Snacks", size: "Piece", price: 40, emoji: "🍫", available: true },
 ];
+// Only the empty current shift is seeded. Orders and completed history are loaded from the backend/local session state.
 const defaultShifts: Shift[] = [
-  { id: "shift-current", openedAt: new Date(Date.now() - 2 * 3600000).toISOString(), orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 },
-  { id: "shift-1", openedAt: new Date(Date.now() - 41 * 3600000).toISOString(), closedAt: new Date(Date.now() - 34 * 3600000).toISOString(), orderCount: 3, online: 0, cod: 0, total: 0, pending: 3 },
-  { id: "shift-2", openedAt: new Date(Date.now() - 42 * 3600000).toISOString(), closedAt: new Date(Date.now() - 41 * 3600000).toISOString(), orderCount: 1, online: 0, cod: 122, total: 122, pending: 0 },
+  { id: "shift-current", openedAt: new Date().toISOString(), orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 },
 ];
 function read<T>(key: string, fallback: T): T { try { const value = window.localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
 function money(value: number) { return `₹${value.toLocaleString("en-IN")}`; }
-function clock(value: string) { return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
-function shortDate(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value)); }
-function dateTime(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function clock(value: string) { return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function shortDate(value: string) { return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" }).format(new Date(value)); }
+function dashboardDate(value: string) { return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date(value)); }
+function dateTime(value: string) { return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function fullDateTime(value: string) { return new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
 function orderFromDatabase(row: Record<string, unknown>): Order {
   const rawItems = Array.isArray(row.items) ? row.items : [];
   const items = rawItems.flatMap((item) => {
@@ -141,10 +143,13 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
   });
   const rawPayment = String(row.payment_method ?? row.payment ?? "COD").toUpperCase();
   const rawStatus = String(row.status ?? "New");
-  const statuses: Order["status"][] = ["New", "Preparing", "Ready", "Delivered"];
+  const rawPaymentStatus = String(row.payment_status ?? "Pending");
+  const statuses: Order["status"][] = ["New", "Preparing", "Ready", "Out for Delivery", "Delivered", "Cancelled"];
+  const paymentStatuses: Order["paymentStatus"][] = ["Pending", "Paid", "Failed", "Cancelled"];
   return {
     id: String(row.order_ref ?? row.id ?? "ORDER"),
     createdAt: String(row.created_at ?? new Date().toISOString()),
+    studentId: typeof row.student_id === "string" ? row.student_id : undefined,
     student: String(row.student_name ?? row.student ?? "Student"),
     phone: String(row.student_phone ?? row.phone ?? ""),
     hostel: String(row.hostel ?? ""),
@@ -152,9 +157,83 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
     total: Number(row.total ?? 0),
     payment: rawPayment === "UPI" ? "UPI" : "COD",
     upiApp: typeof row.upi_app === "string" && row.upi_app ? row.upi_app as UpiApp : undefined,
-    paymentStatus: String(row.payment_status ?? "Pending").toLowerCase() === "paid" ? "Paid" : "Pending",
+    paymentStatus: paymentStatuses.includes(rawPaymentStatus as Order["paymentStatus"]) ? rawPaymentStatus as Order["paymentStatus"] : "Pending",
     status: statuses.includes(rawStatus as Order["status"]) ? rawStatus as Order["status"] : "New",
   };
+}
+
+type DailySalesRow = { key: string; day: number; month: number; year: number; totalOrders: number; onlineReceived: number; codReceived: number; grandTotal: number };
+function getIndiaDateParts(value: string) {
+  const parts = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value));
+  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value || 0);
+  return { year: part("year"), month: part("month"), day: part("day") };
+}
+function buildDailySalesRows(orders: Order[]) {
+  const groups = new Map<string, DailySalesRow>();
+  for (const order of orders) {
+    const { year, month, day } = getIndiaDateParts(order.createdAt);
+    const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const existing = groups.get(key) || { key, day, month, year, totalOrders: 0, onlineReceived: 0, codReceived: 0, grandTotal: 0 };
+    existing.totalOrders += 1;
+    if (order.status !== "Cancelled" && order.paymentStatus === "Paid") {
+      if (order.payment === "UPI") existing.onlineReceived += order.total;
+      if (order.payment === "COD") existing.codReceived += order.total;
+      existing.grandTotal = existing.onlineReceived + existing.codReceived;
+    }
+    groups.set(key, existing);
+  }
+  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+function applyExcelStyle(cell: { s?: unknown; z?: string }, style: unknown, numberFormat?: string) {
+  cell.s = style;
+  if (numberFormat) cell.z = numberFormat;
+}
+function downloadDailySalesReport(orders: Order[]) {
+  const dailyRows = buildDailySalesRows(orders);
+  const grandOrders = dailyRows.reduce((sum, row) => sum + row.totalOrders, 0);
+  const grandOnline = dailyRows.reduce((sum, row) => sum + row.onlineReceived, 0);
+  const grandCod = dailyRows.reduce((sum, row) => sum + row.codReceived, 0);
+  const grandTotal = grandOnline + grandCod;
+  const generatedAt = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(new Date());
+  const sheetRows: (string | number | Date)[][] = [
+    ["Coke Station — Daily Sales Report"],
+    [`Generated: ${generatedAt} · Confirmed payments only`],
+    [],
+    ["Date", "Total Orders", "Online Received", "COD Received", "Grand Total"],
+    ...dailyRows.map((row) => [new Date(`${row.key}T00:00:00+05:30`), row.totalOrders, row.onlineReceived, row.codReceived, row.grandTotal]),
+    ["TOTAL", grandOrders, grandOnline, grandCod, grandTotal],
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
+  const headerRow = 3;
+  const firstDataRow = 4;
+  const totalRow = firstDataRow + dailyRows.length;
+  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }];
+  worksheet["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 20 }, { wch: 17 }, { wch: 16 }];
+  worksheet["!autofilter"] = { ref: `A${headerRow + 1}:E${Math.max(headerRow + 1, totalRow)}` };
+  // xlsx-js-style preserves these worksheet view settings in compatible Excel readers.
+  (worksheet as unknown as { [key: string]: unknown })["!freeze"] = { ySplit: headerRow + 1, topLeftCell: `A${firstDataRow + 1}`, state: "frozen" };
+  const titleStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 16 }, fill: { patternType: "solid", fgColor: { rgb: "8F1017" } }, alignment: { horizontal: "center", vertical: "center" } };
+  const metaStyle = { font: { italic: true, color: { rgb: "6F6878" }, sz: 10 }, alignment: { horizontal: "left" } };
+  const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { patternType: "solid", fgColor: { rgb: "2A2536" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: { style: "thin", color: { rgb: "4F475E" } }, bottom: { style: "thin", color: { rgb: "4F475E" } }, left: { style: "thin", color: { rgb: "4F475E" } }, right: { style: "thin", color: { rgb: "4F475E" } } } };
+  const bodyStyle = { font: { color: { rgb: "3A333C" }, sz: 10 }, alignment: { vertical: "center" }, border: { bottom: { style: "thin", color: { rgb: "DED7D0" } }, left: { style: "thin", color: { rgb: "E8E2DC" } }, right: { style: "thin", color: { rgb: "E8E2DC" } } } };
+  const totalStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { patternType: "solid", fgColor: { rgb: "2E7D4E" } }, alignment: { vertical: "center" }, border: { top: { style: "medium", color: { rgb: "1B5A35" } }, bottom: { style: "medium", color: { rgb: "1B5A35" } } } };
+  applyExcelStyle(worksheet.A1, titleStyle);
+  applyExcelStyle(worksheet.A2, metaStyle);
+  for (let column = 0; column < 5; column += 1) applyExcelStyle(worksheet[XLSX.utils.encode_cell({ r: headerRow, c: column })], headerStyle);
+  for (let row = firstDataRow; row < totalRow; row += 1) {
+    for (let column = 0; column < 5; column += 1) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: column })];
+      applyExcelStyle(cell, bodyStyle, column > 1 ? "₹#,##0" : column === 0 ? "dd-mm-yyyy" : undefined);
+    }
+  }
+  for (let column = 0; column < 5; column += 1) {
+    const cell = worksheet[XLSX.utils.encode_cell({ r: totalRow, c: column })];
+    applyExcelStyle(cell, totalStyle, column > 1 ? "₹#,##0" : undefined);
+  }
+  worksheet["!rows"] = [{ hpt: 28 }, { hpt: 18 }, { hpt: 8 }, { hpt: 24 }, ...dailyRows.map(() => ({ hpt: 20 })), { hpt: 24 }];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Sales");
+  XLSX.writeFile(workbook, "Coke_Station_Daily_Sales_Report.xlsx");
 }
 
 function MiniCup() { return <span className="mini-cup"><i /><b /></span>; }
@@ -348,16 +427,28 @@ function OrderPlacedModal({ order, onClose }: { order: Order; onClose: () => voi
   </Modal>;
 }
 
-function StudentHistory({ orders, onClose }: { orders: Order[]; onClose: () => void }) { return <Modal title="📋 Order History" subtitle="Your previous Coke Station orders." onClose={onClose} wide><div className="old-history-list">{orders.map((order) => <div className="old-history-row" key={order.id}><div className="history-emoji">{order.status === "Delivered" ? "✅" : "🛵"}</div><div><b>{order.items.map((item) => `${item.quantity}× ${item.name}`).join(", ")}</b><small>{order.id} · {dateTime(order.createdAt)} · {order.hostel}</small></div><strong>{money(order.total)}<small>{order.paymentStatus} · {order.status}</small></strong></div>)}{!orders.length && <div className="center-empty"><Icon name="history" size={30} /><h3>No orders yet</h3><p>Your completed orders will appear here.</p></div>}</div></Modal>; }
-
-function OwnerHeader({ onMenu, menuOpen, onCloseMenu, shopOpen, newOrderCount }: { onMenu: () => void; menuOpen: boolean; onCloseMenu: () => void; shopOpen: boolean; newOrderCount: number }) { return <header className="owner-header"><div className="owner-header-brand"><MiniCup /><div><strong>Coke Station</strong><span>OWNER DASHBOARD</span><small>📅 {shortDate(new Date().toISOString())}</small><em>Shift started {shortDate(new Date().toISOString())} · {clock(new Date(Date.now() - 2 * 3600000).toISOString())}</em></div></div><div className="owner-header-actions">{newOrderCount > 0 && <span className="new-order-pill">{newOrderCount} new {newOrderCount === 1 ? "order" : "orders"}</span>}<span className={`owner-live-dot ${shopOpen ? "" : "closed"}`} /><button className="owner-kebab" onClick={onMenu}>⋮</button>{menuOpen && <OwnerActionMenu shopOpen={shopOpen} onClose={onCloseMenu} />}</div></header>; }
+function StudentHistory({ orders, studentId, studentPhone, onClose }: { orders: Order[]; studentId?: string; studentPhone?: string; onClose: () => void }) {
+  const normalizePhone = (value: string) => value.replace(/\D/g, "").slice(-10);
+  const historyOrders = [...orders].filter((order) => {
+    if (!studentId && !studentPhone) return true;
+    return (Boolean(studentId) && order.studentId === studentId) || (Boolean(studentPhone) && normalizePhone(order.phone) === normalizePhone(studentPhone || ""));
+  }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const confirmedOrders = historyOrders.filter((order) => order.paymentStatus === "Paid" && order.status !== "Cancelled");
+  const totalSpent = confirmedOrders.reduce((sum, order) => sum + order.total, 0);
+  const onlinePaid = confirmedOrders.filter((order) => order.payment === "UPI").reduce((sum, order) => sum + order.total, 0);
+  const codPaid = confirmedOrders.filter((order) => order.payment === "COD").reduce((sum, order) => sum + order.total, 0);
+  const paymentLabel = (status: Order["paymentStatus"]) => status === "Paid" ? "PAID" : status === "Failed" ? "PAYMENT FAILED" : status === "Cancelled" ? "PAYMENT CANCELLED" : "PAYMENT PENDING";
+  const deliveryLabel = (status: Order["status"]) => status === "Out for Delivery" ? "Out for Delivery" : status;
+  return <Modal title="🧾 My Order History" subtitle="What you ordered, when you ordered and how much you spent" onClose={onClose} wide className="student-history-modal"><div className="student-history-content"><div className="student-history-summary"><div><span>🧾</span><small>TOTAL ORDERS</small><strong>{historyOrders.length}</strong></div><div><span>💰</span><small>TOTAL SPENT</small><strong className="history-total-green">{money(totalSpent)}</strong></div><div><span>💳</span><small>ONLINE PAID</small><strong className="history-total-blue">{money(onlinePaid)}</strong></div><div><span>💵</span><small>COD PAID</small><strong className="history-total-orange">{money(codPaid)}</strong></div></div><p className="student-history-note">Spending totals include only payments confirmed by the shop owner.</p><div className="student-history-list">{historyOrders.map((order) => <article className={`student-history-card history-status-${order.status.toLowerCase().replace(/\s+/g, "-")}`} key={order.id}><div className="history-card-top"><div><strong>🏠 {order.hostel || "Hostel not set"}</strong><span>📅 {fullDateTime(order.createdAt)}</span><small>{order.id}</small></div><div className="history-card-amount"><strong>{money(order.total)}</strong><span className={`history-payment-status ${order.paymentStatus.toLowerCase()}`}>{paymentLabel(order.paymentStatus)}</span></div></div><div className="history-item-pills">{order.items.map((item) => <span key={`${order.id}-${item.name}`}>{item.name.includes("Maggie") ? "🍜" : "🍽️"} {item.name} × {item.quantity}</span>)}</div><div className="history-card-bottom"><span className={`history-payment-method ${order.payment.toLowerCase()}`}>{order.payment === "COD" ? "💵 Cash on Delivery" : `💳 Online Payment${order.upiApp ? ` · ${order.upiApp}` : ""}`}</span><span className={`history-delivery-status ${order.status.toLowerCase().replace(/\s+/g, "-")}`}>{order.status === "Delivered" ? "✅" : order.status === "Cancelled" ? "✕" : "⏱️"} {deliveryLabel(order.status)}</span></div></article>)}{historyOrders.length === 0 && <div className="center-empty student-history-empty"><Icon name="history" size={30} /><h3>No orders yet</h3><p>Your orders will appear here after you place them.</p></div>}</div></div></Modal>;
+}
+function OwnerHeader({ onMenu, menuOpen, onCloseMenu, shopOpen, shiftStartedAt, newOrderCount }: { onMenu: () => void; menuOpen: boolean; onCloseMenu: () => void; shopOpen: boolean; shiftStartedAt: string; newOrderCount: number }) { return <header className="owner-header"><div className="owner-header-brand"><MiniCup /><div><strong>Coke Station</strong><span>OWNER DASHBOARD</span><small>📅 {dashboardDate(new Date().toISOString())}</small><em>Shift started {dashboardDate(shiftStartedAt)} · {clock(shiftStartedAt)}</em></div></div><div className="owner-header-actions">{newOrderCount > 0 && <span className="new-order-pill">{newOrderCount} new {newOrderCount === 1 ? "order" : "orders"}</span>}<span className={`owner-live-dot ${shopOpen ? "" : "closed"}`} /><button className="owner-kebab" onClick={onMenu}>⋮</button>{menuOpen && <OwnerActionMenu shopOpen={shopOpen} onClose={onCloseMenu} />}</div></header>; }
 function OwnerActionMenu({ onClose, shopOpen }: { onClose: () => void; shopOpen: boolean }) { return <div className="owner-action-menu"><button className={shopOpen ? "shop-menu-green" : "shop-menu-closed"} onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-shop")); onClose(); }}>{shopOpen ? "🟢 Shop Open" : "🔴 Shop Closed"}</button><button className="menu-menu-green" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-menu")); onClose(); }}>🍽️ Menu List</button><button className="menu-menu-blue" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-payment")); onClose(); }}>💳 Online Payment<br />Update</button><button className="menu-menu-orange" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-scratch")); onClose(); }}>🧹 Scratch</button><button className="menu-menu-blue" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-history")); onClose(); }}>📊 History</button><button className="menu-menu-gray" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-logout")); onClose(); }}>🚪 Logout</button></div>; }
 
 function StatCard({ icon, title, value, helper, color }: { icon: string; title: string; value: string; helper: string; color: string }) { return <div className={`owner-stat-card ${color}`}><span className="stat-emoji">{icon}</span><small>{title}</small><strong>{value}</strong><em>{helper}</em></div>; }
 type DeliveryStep = "choose" | "cash" | "online" | "complete";
 type DeliveryFlow = { orderId: string; step: DeliveryStep; cashAmount: string; error: string };
 
-function OwnerOrders({ orders, paymentSettings, onPayment, onAdvance, onCall, onNavigate }: { orders: Order[]; paymentSettings: PaymentSettings; onPayment: (id: string) => void; onAdvance: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void }) {
+function OwnerOrders({ orders, paymentSettings, onPayment, onAdvance, onCompleteDelivery, onCall, onNavigate }: { orders: Order[]; paymentSettings: PaymentSettings; onPayment: (id: string, method?: PaymentMethod) => void; onAdvance: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void }) {
   const [deliveryFlow, setDeliveryFlow] = useState<DeliveryFlow | null>(null);
   const selectedOrder = deliveryFlow ? orders.find((order) => order.id === deliveryFlow.orderId) : undefined;
   const beginDelivery = (order: Order) => setDeliveryFlow({ orderId: order.id, step: "choose", cashAmount: String(order.total), error: "" });
@@ -367,29 +458,29 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onAdvance, onCall, on
       setDeliveryFlow({ ...deliveryFlow, error: `Enter the exact amount ${money(selectedOrder.total)}.` });
       return;
     }
-    onPayment(selectedOrder.id);
+    onPayment(selectedOrder.id, "COD");
     setDeliveryFlow({ ...deliveryFlow, step: "complete", error: "" });
   };
   const confirmOnline = () => {
     if (!selectedOrder || !deliveryFlow) return;
-    onPayment(selectedOrder.id);
+    onPayment(selectedOrder.id, "UPI");
     setDeliveryFlow({ ...deliveryFlow, step: "complete", error: "" });
   };
   return <section className="owner-orders-section"><h2>Current Shift Orders{orders.length > 0 && <span className="orders-total">({orders.length} total)</span>}</h2>{orders.length ? <div className="owner-order-list">{orders.map((order) => {
-    const needsPayment = order.status === "Ready" && order.payment === "COD" && order.paymentStatus === "Pending";
+    const needsPayment = (order.status === "Ready" || order.status === "Out for Delivery") && order.payment === "COD" && order.paymentStatus === "Pending";
     const activeFlow = deliveryFlow?.orderId === order.id ? deliveryFlow : null;
     const hostelLocation = hostels.find((hostel) => hostel.name === order.hostel);
-    return <article className={`owner-order-card old-owner-order ${order.status.toLowerCase()}`} key={order.id}>
-      <div className="old-order-top"><div className="old-order-title"><span className="old-hostel">🏠 {order.hostel}</span><span className={`old-payment ${order.payment.toLowerCase()}`}>{order.payment === "COD" ? "💵 COD" : "💳 UPI"}</span><span className={`old-order-status ${order.status.toLowerCase()}`}><i />{order.status}</span></div><div className="old-order-amount"><b>{money(order.total)}</b>{order.status !== "Delivered" && <button className="call-now" onClick={() => onCall(order.phone)}>📞 CALL NOW</button>}{order.status === "Delivered" && <small>✓ Delivered</small>}</div></div>
+    return <article className={`owner-order-card old-owner-order ${order.status.toLowerCase().replace(/\s+/g, "-")}`} key={order.id}>
+      <div className="old-order-top"><div className="old-order-title"><span className="old-hostel">🏠 {order.hostel}</span><span className={`old-payment ${order.payment.toLowerCase()}`}>{order.payment === "COD" ? "💵 COD" : "💳 UPI"}</span><span className={`old-order-status ${order.status.toLowerCase().replace(/\s+/g, "-")}`}>{order.status === "Delivered" ? "🚚 Delivered" : <><i />{order.status}</>}</span></div><div className="old-order-amount"><b>{money(order.total)}</b>{order.paymentStatus === "Paid" ? <small className="payment-received">✓ {money(order.total)} received · {order.payment === "COD" ? "💵 Cash" : "📱 UPI"}</small> : order.payment === "UPI" ? <small className={`payment-${order.paymentStatus.toLowerCase()}`}>⚠ {order.paymentStatus === "Failed" ? "PAYMENT FAILED" : order.paymentStatus === "Cancelled" ? "PAYMENT CANCELLED" : "PAYMENT PENDING"}</small> : null}{order.status === "Delivered" ? <span className="delivered-badge">✓ DELIVERED</span> : <a className="call-now" href={`tel:${order.phone.replace(/\s/g, "")}`} onClick={() => onCall(order.phone)}>📞 CALL NOW</a>}</div></div>
       <div className="old-order-person"><span>👤 {order.student}</span><span>· {dateTime(order.createdAt)}</span><span className="old-phone-line">📞 {order.phone}</span></div>
       <div className="owner-order-items old-items">{order.items.map((item) => <span key={item.name}>{item.quantity}× {item.name}</span>)}</div>
-      <div className="old-call-row"><button onClick={() => onCall(order.phone)}>📞 Call Student</button><span>{order.phone}</span></div>
-      {order.status === "Ready" && <div className="old-delivery-details"><div className="old-delivery-heading">🚚 DELIVERY DETAILS</div><div className="old-delivery-grid"><span>🏠 <b>{order.hostel}</b></span><span>👤 <b>{order.student}</b></span><span>📞 <b>{order.phone}</b></span><span>{order.payment === "COD" ? "💵" : "💳"} <b>{order.payment === "COD" ? "Cash on Delivery" : "Online payment"}</b></span></div>{hostelLocation?.latitude !== undefined && hostelLocation.longitude !== undefined ? <button className="navigate-hostel-button" type="button" onClick={() => openHostelDirections(hostelLocation, onNavigate)}>📍 Navigate to {order.hostel}</button> : <span className="no-navigation">📍 GPS location unavailable for this hostel</span>}</div>}
-      <div className="old-owner-actions">{order.paymentStatus === "Pending" && order.payment === "UPI" && <button className="confirm-payment" onClick={() => onPayment(order.id)}>✓ Accept payment</button>}{order.status === "New" && <button className="old-next new-next" onClick={() => onAdvance(order.id)}>→ Mark as Preparing</button>}{order.status === "Preparing" && <button className="old-next preparing-next" onClick={() => onAdvance(order.id)}>→ Mark as Ready</button>}{order.status === "Ready" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Ready" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{order.status === "Delivered" && <span className="completed"><Icon name="check" size={14} /> Completed</span>}</div>
+      {order.status !== "Delivered" && <div className="old-call-row"><button onClick={() => onCall(order.phone)}>📞 Call Student</button><span>{order.phone}</span></div>}
+      {(order.status === "Ready" || order.status === "Out for Delivery") && <div className="old-delivery-details"><div className="old-delivery-heading">🚚 DELIVERY DETAILS</div><div className="old-delivery-grid"><span>🏠 <b>{order.hostel}</b></span><span>👤 <b>{order.student}</b></span><span>📞 <b>{order.phone}</b></span><span>{order.payment === "COD" ? "💵" : "💳"} <b>{order.payment === "COD" ? "Cash on Delivery" : "Online payment"}</b></span></div></div>}
+      <div className="old-owner-actions">{order.paymentStatus === "Pending" && order.payment === "UPI" && <button className="confirm-payment" onClick={() => onPayment(order.id, "UPI")}>✓ Accept payment</button>}{order.status === "New" && <button className="old-next new-next" onClick={() => onAdvance(order.id)}>→ Mark as Preparing</button>}{order.status === "Preparing" && <button className="old-next preparing-next" onClick={() => onAdvance(order.id)}>→ Mark as Ready</button>}{order.status === "Ready" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Ready" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{(order.status === "Ready" || order.status === "Out for Delivery") && !activeFlow && (hostelLocation?.latitude !== undefined && hostelLocation.longitude !== undefined ? <button className="navigate-hostel-button" type="button" onClick={() => openHostelDirections(hostelLocation, onNavigate)}>📍 Navigate to {order.hostel}</button> : <span className="no-navigation">📍 No location for {order.hostel}</span>)}</div>
       {activeFlow && activeFlow.step === "choose" && <div className="delivery-payment-panel choose-payment"><strong>💳 Collect payment from the student first</strong><button className="cash-received-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "cash", error: "" })}>💵 Cash Received</button><button className="pay-online-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "online", error: "" })}>📱 Pay Online (UPI / QR)</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div>}
       {activeFlow && activeFlow.step === "cash" && <div className="delivery-payment-panel cash-payment"><strong>💵 Cash Received — enter the exact amount</strong><div className="cash-entry"><span>₹</span><input type="number" min="0" value={activeFlow.cashAmount} onChange={(event) => setDeliveryFlow({ ...activeFlow, cashAmount: event.target.value, error: "" })} /><button onClick={confirmCash}>✓ Confirm Cash Received</button></div>{activeFlow.error && <p className="payment-flow-error">{activeFlow.error}</p>}<button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
       {activeFlow && activeFlow.step === "online" && <div className="delivery-payment-panel online-payment"><strong>📱 Pay Online — show this to the student</strong><div className="delivery-online-body">{paymentSettings.qrCode ? <img src={paymentSettings.qrCode} alt="Food stall QR code" /> : <FakeQR />}<div><span>AMOUNT TO COLLECT</span><b>{money(order.total)}</b><span>UPI ID</span><strong>{paymentSettings.upiId}</strong></div></div><button className="confirm-online-button" onClick={confirmOnline}>✓ Confirm Online Payment Received</button><button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
-      {activeFlow && activeFlow.step === "complete" && <div className="delivery-payment-panel complete-payment"><strong>✓ {money(order.total)} received via {order.payment === "COD" ? "💵 Cash" : "💳 UPI"}</strong><div><button className="complete-delivery-button" onClick={() => { onAdvance(order.id); setDeliveryFlow(null); }}>🚚 Complete Mark as Delivered</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div></div>}
+      {activeFlow && activeFlow.step === "complete" && <div className="delivery-payment-panel complete-payment"><strong>✓ {money(order.total)} received via {order.payment === "COD" ? "💵 Cash" : "💳 UPI"}</strong><div><button className="complete-delivery-button" onClick={() => { onCompleteDelivery(order.id); setDeliveryFlow(null); }}>🚚 Complete Mark as Delivered</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div></div>}
     </article>;
   })}</div> : <div className="owner-empty-state"><span>📫</span><h3>No orders yet</h3><p>Orders from students will appear here</p></div>}</section>;
 }
@@ -428,9 +519,29 @@ function PaymentModal({ settings, onClose, onSave }: { settings: PaymentSettings
 function FakeQR() { const bits = [1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,1,0,1,1,0,0,1,0,1,1,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,1,0,1,1,0]; return <div className="fake-qr-grid">{bits.map((bit, i) => <i className={bit ? "on" : ""} key={i} />)}</div>; }
 function ConfirmModal({ kind, shopOpen = true, onClose, onConfirm }: { kind: "shop" | "scratch"; shopOpen?: boolean; onClose: () => void; onConfirm: () => void }) { const shop = kind === "shop"; const closing = shop && shopOpen; return <Modal title={shop ? (closing ? "Close Coke Station?" : "Open Coke Station?") : "Scratch and start a new shift?"} onClose={onClose} className={`confirm-modal ${shop ? (closing ? "red-confirm" : "green-confirm-modal") : "orange-confirm"}`}><div className="confirm-content"><div className={`confirm-icon ${shop ? (closing ? "red-status" : "green-status") : "orange-status"}`}><span /></div><p>{shop ? (closing ? "Students will immediately see the Shop Closed screen and will not be able to browse the menu or place an order." : "Students will be able to browse the menu and place orders as soon as the shop opens.") : "Shift orders, Online Received, COD Received and Grand Total will all return to zero. Previous orders and money records will remain safely available in History."}</p><button className={shop && closing ? "red-confirm-button" : shop ? "green-confirm-button" : "orange-confirm-button"} onClick={onConfirm}>{shop ? (closing ? "Yes, Close Shop" : "Yes, Open Shop") : "Yes, Scratch Everything to Zero"}</button><button className="cancel-confirm" onClick={onClose}>Cancel</button></div></Modal>; }
 
-function SalesHistoryModal({ orders, shifts, shopOpen, onClose, onDelete }: { orders: Order[]; shifts: Shift[]; shopOpen: boolean; onClose: () => void; onDelete: (id: string) => void }) { const all = shifts.reduce((sum, shift) => sum + shift.orderCount, 0) + orders.length; const online = shifts.reduce((sum, shift) => sum + shift.online, 0) + orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); const cod = shifts.reduce((sum, shift) => sum + shift.cod, 0) + orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div><div className="history-session-list"><div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(new Date().toISOString())} · {clock(new Date(Date.now() - 2 * 3600000).toISOString())}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{orders.length} orders</strong></div><div className="session-money"><span>ONLINE <b>{money(online - shifts.reduce((sum, shift) => sum + shift.online, 0))}</b><small>{orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed</small></span><span>COD <b>{money(cod - shifts.reduce((sum, shift) => sum + shift.cod, 0))}</b><small>{orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed</small></span><span>TOTAL <b>{money(orders.filter((order) => order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0))}</b><small>{orders.filter((order) => order.paymentStatus === "Pending").length} pending</small></span></div></div>{shifts.filter((shift) => shift.closedAt).map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => onDelete(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>0 confirmed</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "1 confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</div></Modal>; }
-
-function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onPaymentSave, onAdvance, onPay, onCall, onNavigate, onDeleteShift }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void }) { const [actionMenu, setActionMenu] = useState(false); const [modal, setModal] = useState<"shop" | "scratch" | "menu" | "payment" | "history" | null>(null); useEffect(() => { const pairs: [string, () => void][] = [["legacy-open-shop", () => setModal("shop")], ["legacy-open-menu", () => setModal("menu")], ["legacy-open-payment", () => setModal("payment")], ["legacy-open-scratch", () => setModal("scratch")], ["legacy-open-history", () => setModal("history")], ["legacy-logout", onLogout]]; const listeners = pairs.map(([name, handler]) => { window.addEventListener(name, handler); return [name, handler] as const; }); return () => listeners.forEach(([name, handler]) => window.removeEventListener(name, handler)); }, [onLogout]); const paidOnline = orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); const paidCod = orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} newOrderCount={orders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(orders.length)} helper={`since ${clock(new Date(Date.now() - 2 * 3600000).toISOString())}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={orders} paymentSettings={paymentSettings} onPayment={onPay} onAdvance={onAdvance} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} shifts={shifts} shopOpen={shopOpen} onClose={() => setModal(null)} onDelete={onDeleteShift} />}</div>; }
+function SalesHistoryModal({ orders, currentOrders, shifts, shopOpen, shiftStartedAt, onClose, onDelete, onDownloadExcel }: { orders: Order[]; currentOrders: Order[]; shifts: Shift[]; shopOpen: boolean; shiftStartedAt: string; onClose: () => void; onDelete: (id: string) => void; onDownloadExcel: () => void }) {
+  const completedShifts = shifts.filter((shift) => shift.closedAt);
+  const liveOrders = shopOpen ? currentOrders : [];
+  const all = completedShifts.reduce((sum, shift) => sum + shift.orderCount, 0) + liveOrders.length;
+  const online = completedShifts.reduce((sum, shift) => sum + shift.online, 0) + liveOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+  const cod = completedShifts.reduce((sum, shift) => sum + shift.cod, 0) + liveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+  const liveOnline = liveOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+  const liveCod = liveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+  return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span><button className="download-excel-button" onClick={onDownloadExcel}>📥 Download Excel</button></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div><div className="history-session-list">{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveOrders.length} {liveOrders.length === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveOnline)}</b><small>{liveOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed</small></span><span>COD <b>{money(liveCod)}</b><small>{liveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed</small></span><span>TOTAL <b>{money(liveOnline + liveCod)}</b><small>{liveOrders.filter((order) => order.paymentStatus !== "Paid").length} pending</small></span></div></div>}{completedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => onDelete(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</div></Modal>;
+}
+function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onPaymentSave, onAdvance, onPay, onCompleteDelivery, onCall, onNavigate, onDeleteShift, onDownloadExcel }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void; onDownloadExcel: () => void }) {
+  const [actionMenu, setActionMenu] = useState(false);
+  const [modal, setModal] = useState<"shop" | "scratch" | "menu" | "payment" | "history" | null>(null);
+  useEffect(() => {
+    const pairs: [string, () => void][] = [["legacy-open-shop", () => setModal("shop")], ["legacy-open-menu", () => setModal("menu")], ["legacy-open-payment", () => setModal("payment")], ["legacy-open-scratch", () => setModal("scratch")], ["legacy-open-history", () => setModal("history")], ["legacy-logout", onLogout]];
+    const listeners = pairs.map(([name, handler]) => { window.addEventListener(name, handler); return [name, handler] as const; });
+    return () => listeners.forEach(([name, handler]) => window.removeEventListener(name, handler));
+  }, [onLogout]);
+  const currentShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime());
+  const paidOnline = currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
+  const paidCod = currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
+  return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} newOrderCount={currentShiftOrders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(currentShiftOrders.length)} helper={`since ${clock(shiftStartedAt)}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={currentShiftOrders} paymentSettings={paymentSettings} onPayment={onPay} onAdvance={onAdvance} onCompleteDelivery={onCompleteDelivery} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} currentOrders={currentShiftOrders} shifts={shifts} shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} onClose={() => setModal(null)} onDelete={onDeleteShift} onDownloadExcel={onDownloadExcel} />}</div>;
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("landing");
@@ -442,11 +553,14 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>(() => read("legacy-coke-orders", []));
   const [shifts, setShifts] = useState<Shift[]>(() => read("legacy-coke-shifts", defaultShifts));
   const [shopOpen, setShopOpen] = useState<boolean>(() => read("legacy-coke-shop", true));
+  const [backendShiftStartedAt, setBackendShiftStartedAt] = useState<string | null>(null);
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(() => read("legacy-coke-payment-settings", defaultPaymentSettings));
   const [cart, setCart] = useState<{ item: MenuItem; quantity: number }[]>([]);
   const [cartByAccount, setCartByAccount] = useState<Record<string, { item: MenuItem; quantity: number }[]>>(() => read("legacy-coke-carts", {}));
   const accountKey = profile.id ? `user:${profile.id}` : profile.phone ? `phone:${normalizeIndianPhone(profile.phone)}` : "guest";
   const activeAccountKey = useRef(accountKey);
+  const currentShift = shifts.find((shift) => !shift.closedAt);
+  const shiftStartedAt = backendShiftStartedAt || currentShift?.openedAt || shifts[0]?.openedAt || new Date().toISOString();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
@@ -490,8 +604,11 @@ export default function App() {
     if (!client) return;
     let cancelled = false;
     const loadShopStatus = async () => {
-      const { data } = await client.from("coke_shop_status").select("is_open").eq("id", 1).maybeSingle();
-      if (!cancelled && data && typeof data.is_open === "boolean") setShopOpen(data.is_open);
+      const { data } = await client.from("coke_shop_status").select("is_open, shift_started_at").eq("id", 1).maybeSingle();
+      if (!cancelled && data && typeof data.is_open === "boolean") {
+        setShopOpen(data.is_open);
+        if (typeof data.shift_started_at === "string" && data.shift_started_at) setBackendShiftStartedAt(data.shift_started_at);
+      }
     };
     void loadShopStatus();
     const timer = window.setInterval(() => { void loadShopStatus(); }, 2500);
@@ -675,7 +792,7 @@ export default function App() {
   const changeQuantity = (id: string, delta: number) => setCart((current) => current.map((row) => row.item.id === id ? { ...row, quantity: row.quantity + delta } : row).filter((row) => row.quantity > 0));
   const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
     const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
-    const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
+    const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), studentId: profile.id, student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
     let savedOrder = order;
     if (supabase && supabaseConfigured) {
       if (!profile.id) throw new Error("Your session expired. Please log in again.");
@@ -700,15 +817,43 @@ export default function App() {
     setCheckoutOpen(false);
     setOrderPlaced(savedOrder);
   };
-  const scratch = () => { if (orders.length) { const online = orders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); const cod = orders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0); setShifts((current) => [{ id: `shift-${Date.now()}`, openedAt: new Date(Date.now() - 2 * 3600000).toISOString(), closedAt: new Date().toISOString(), orderCount: orders.length, online, cod, total: online + cod, pending: orders.filter((order) => order.paymentStatus === "Pending").length }, ...current]); } setOrders([]); notify("Shift counters reset to zero"); };
+  const scratch = () => {
+    const now = new Date().toISOString();
+    const previousShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime() && order.status !== "Cancelled");
+    const online = previousShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+    const cod = previousShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+    setShifts((current) => {
+      const completed = current.find((shift) => !shift.closedAt);
+      const previousCompleted = current.filter((shift) => shift.closedAt);
+      const completedShift = completed ? { ...completed, closedAt: now, orderCount: previousShiftOrders.length, online, cod, total: online + cod, pending: previousShiftOrders.filter((order) => order.paymentStatus === "Pending").length } : null;
+      return [{ id: `shift-${Date.now()}`, openedAt: now, orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 }, ...(completedShift ? [completedShift] : []), ...previousCompleted];
+    });
+    notify("New shift started — current counters reset to zero");
+  };
   const toggleShop = async () => {
     const nextStatus = !shopOpen;
-    setShopOpen(nextStatus);
+    const previousBackendShift = backendShiftStartedAt;
+    const previousShifts = shifts;
+    const openingTime = new Date().toISOString();
+    if (nextStatus) {
+      setShopOpen(true);
+      setBackendShiftStartedAt(openingTime);
+      setShifts((current) => current.some((shift) => !shift.closedAt) ? current : [{ id: `shift-${Date.now()}`, openedAt: openingTime, orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 }, ...current]);
+    } else {
+      const previousShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime() && order.status !== "Cancelled");
+      const online = previousShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+      const cod = previousShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
+      setShopOpen(false);
+      setBackendShiftStartedAt(null);
+      setShifts((current) => current.map((shift) => !shift.closedAt ? { ...shift, closedAt: openingTime, orderCount: previousShiftOrders.length, online, cod, total: online + cod, pending: previousShiftOrders.filter((order) => order.paymentStatus !== "Paid").length } : shift));
+    }
     if (supabase && ownerPin) {
       const { data, error } = await supabase.rpc("owner_set_shop_status", { p_open: nextStatus, p_owner_pin: ownerPin });
       const statusBackendMissing = error && ["42883", "PGRST202", "42P01"].includes(error.code || "");
       if ((error && !statusBackendMissing) || data === false) {
-        setShopOpen(shopOpen);
+        setShopOpen(!nextStatus);
+        setBackendShiftStartedAt(previousBackendShift);
+        setShifts(previousShifts);
         notify(error?.message || "Shop status was not changed");
         return;
       }
@@ -734,9 +879,9 @@ export default function App() {
     }
     notify("Payment settings saved");
   };
-  const syncOwnerOrder = async (orderRef: string, status: Order["status"], paymentStatus: Order["paymentStatus"]) => {
+  const syncOwnerOrder = async (orderRef: string, status: Order["status"], paymentStatus: Order["paymentStatus"], paymentMethod: PaymentMethod) => {
     if (!supabase || !ownerPin) return;
-    const { data, error } = await supabase.rpc("owner_update_coke_station_order", { p_order_ref: orderRef, p_status: status, p_payment_status: paymentStatus, p_pin: ownerPin });
+    const { data, error } = await supabase.rpc("owner_update_coke_station_order", { p_order_ref: orderRef, p_status: status, p_payment_status: paymentStatus, p_payment_method: paymentMethod, p_pin: ownerPin });
     const ordersBackendMissing = error && ["42883", "PGRST202", "42P01"].includes(error.code || "");
     if ((error && !ordersBackendMissing) || data === false) notify(error?.message || "Order update was not saved");
     else if (ordersBackendMissing) notify("Updated on this device — run ORDERS_BACKEND.sql to sync the owner dashboard");
@@ -747,14 +892,21 @@ export default function App() {
     const status: Order["status"] = order.status === "New" ? "Preparing" : order.status === "Preparing" ? "Ready" : "Delivered";
     const paymentStatus: Order["paymentStatus"] = status === "Delivered" && order.payment === "COD" ? "Paid" : order.paymentStatus;
     setOrders((current) => current.map((item) => item.id === id ? { ...item, status, paymentStatus } : item));
-    void syncOwnerOrder(id, status, paymentStatus);
+    void syncOwnerOrder(id, status, paymentStatus, order.payment);
   };
-  const confirmPayment = (id: string) => {
+  const confirmPayment = (id: string, method: PaymentMethod = "UPI") => {
     const order = orders.find((item) => item.id === id);
     if (!order) return;
-    setOrders((current) => current.map((item) => item.id === id ? { ...item, paymentStatus: "Paid" } : item));
-    void syncOwnerOrder(id, order.status, "Paid");
+    setOrders((current) => current.map((item) => item.id === id ? { ...item, paymentStatus: "Paid", payment: method } : item));
+    void syncOwnerOrder(id, order.status, "Paid", method);
     notify("Payment accepted");
+  };
+  const completeDelivery = (id: string) => {
+    const order = orders.find((item) => item.id === id);
+    if (!order) return;
+    setOrders((current) => current.map((item) => item.id === id ? { ...item, status: "Delivered", paymentStatus: item.payment === "COD" ? "Paid" : item.paymentStatus } : item));
+    void syncOwnerOrder(id, "Delivered", order.payment === "COD" ? "Paid" : order.paymentStatus, order.payment);
+    notify("Order marked as delivered");
   };
   const deleteShift = (id: string) => { if (window.confirm("Delete this history record? This cannot be undone.")) { setShifts((current) => current.filter((shift) => shift.id !== id)); notify("History record deleted"); } };
   const fetchStudentOrders = async () => {
@@ -783,7 +935,7 @@ export default function App() {
   else if (screen === "forgot-password") screenContent = <ForgotPasswordPage onBack={() => setScreen("student-login")} onSuccess={notify} />;
   else if (screen === "owner-pin") screenContent = <Login owner onBack={() => setScreen("landing")} onSuccess={(pin) => { setOwnerPin(pin || ""); setScreen("owner-dashboard"); }} />;
   else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
-  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={(id) => setMenu((current) => current.map((item) => item.id === id ? { ...item, available: !item.available } : item))} onAdd={(item) => { setMenu((current) => [...current, item]); notify(`${item.name} added`); }} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} />;
+  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={(id) => setMenu((current) => current.map((item) => item.id === id ? { ...item, available: !item.available } : item))} onAdd={(item) => { setMenu((current) => [...current, item]); notify(`${item.name} added`); }} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} onDownloadExcel={() => downloadDailySalesReport(orders)} />;
 
-  return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
+  return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
 }
