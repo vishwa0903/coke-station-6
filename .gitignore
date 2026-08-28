@@ -16,3 +16,7 @@ uploads/
 .DS_Store
 
 .npm/
+
+coke-station-github.zip
+
+*.zip

@@ -4,8 +4,11 @@
 create table if not exists public.coke_shop_status (
   id integer primary key check (id = 1),
   is_open boolean not null default false,
+  shift_started_at timestamptz,
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.coke_shop_status add column if not exists shift_started_at timestamptz;
 
 insert into public.coke_shop_status (id, is_open)
 values (1, false)
@@ -52,9 +55,14 @@ begin
     return false;
   end if;
 
-  insert into public.coke_shop_status (id, is_open)
-  values (1, p_open)
-  on conflict (id) do update set is_open = excluded.is_open;
+  insert into public.coke_shop_status (id, is_open, shift_started_at)
+  values (1, p_open, case when p_open then timezone('utc', now()) else null end)
+  on conflict (id) do update set
+    is_open = excluded.is_open,
+    shift_started_at = case
+      when excluded.is_open then timezone('utc', now())
+      else public.coke_shop_status.shift_started_at
+    end;
 
   return true;
 end;
