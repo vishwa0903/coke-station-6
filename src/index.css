@@ -322,8 +322,8 @@ input, select { outline: none; }
 .old-items { margin-top: 14px; padding: 9px 0; }
 .old-items span { background: #211e2b; border: 1px solid #302b3a; color: #eee8ef; font-size: 9px; }
 .old-call-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.old-call-row button { min-height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: #18cd5a; color: #06120a; font-size: 9px; font-weight: 900; }
-.old-call-row button:hover { background: #35e96e; }
+.old-call-row button, .old-call-row .call-student-link { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; border: 0; border-radius: 8px; background: #18cd5a; color: #06120a; font-size: 9px; font-weight: 900; text-decoration: none; }
+.old-call-row button:hover, .old-call-row .call-student-link:hover { background: #35e96e; }
 .old-call-row > span { color: #8b8391; font-size: 9px; }
 .old-owner-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
 .old-next { min-height: 36px; padding: 0 12px; border: 0; border-radius: 8px; color: #fff; font-size: 9px; font-weight: 900; transition: transform .15s ease, filter .15s ease; }
