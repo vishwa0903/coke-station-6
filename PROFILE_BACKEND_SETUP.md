@@ -21,7 +21,8 @@ Do not use a service-role key in frontend code.
 6. Run `supabase/SHOP_STATUS.sql` in Supabase SQL Editor so Shop Open / Shop Closed is shared between owner and student devices.
 7. Run `supabase/ONLINE_PAYMENT_UPDATE.sql` in Supabase SQL Editor so the owner's UPI ID and QR changes are saved and shared.
 8. Run `supabase/ORDERS_BACKEND.sql` in Supabase SQL Editor so student orders are shared with the owner across phones and laptops.
-9. Restart the dev server after changing `.env`.
+9. Run `supabase/MENU_BACKEND.sql` in Supabase SQL Editor so Menu List changes and stock status are shared with student devices.
+10. Restart the dev server after changing `.env`.
 
 ## Password reset note
 

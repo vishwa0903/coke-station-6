@@ -48,6 +48,9 @@ const hostels: Hostel[] = [
   { name: "Beryl", gender: "Girls Hostel", latitude: 10.762089234457777, longitude: 78.81746592790621 },
 ];
 const emptyProfile: StudentProfile = { name: "Vishwa S", phone: "", hostel: "", room: "" };
+function isHostedEnvironment() {
+  return typeof window !== "undefined" && !["localhost", "127.0.0.1"].includes(window.location.hostname);
+}
 function normalizeIndianPhone(value: string) {
   const digits = value.replace(/\D/g, "");
   const tenDigits = digits.startsWith("91") && digits.length > 10 ? digits.slice(-10) : digits;
@@ -234,6 +237,20 @@ function downloadDailySalesReport(orders: Order[]) {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Sales");
   XLSX.writeFile(workbook, "Coke_Station_Daily_Sales_Report.xlsx");
+}
+
+function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
+  const categories: Exclude<Category, "All">[] = ["Maggie", "Eggs", "Sandwiches", "Hot Drinks", "Cold Drinks", "Snacks"];
+  const category = String(row.category ?? "Snacks");
+  return {
+    id: String(row.id ?? `menu-${Date.now()}`),
+    name: String(row.name ?? "Menu item"),
+    category: categories.includes(category as Exclude<Category, "All">) ? category as Exclude<Category, "All"> : "Snacks",
+    size: String(row.size ?? "Regular"),
+    price: Number(row.price ?? 0),
+    emoji: String(row.emoji ?? "🍽️"),
+    available: row.available !== false,
+  };
 }
 
 function MiniCup() { return <span className="mini-cup"><i /><b /></span>; }
@@ -627,6 +644,30 @@ export default function App() {
     setCart(cartByAccount[accountKey] || []);
   }, [accountKey]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2800); return () => window.clearTimeout(timer); }, [toast]);
+  // Menu is shared through Supabase; localStorage is only a fallback until the migration is run.
+  useEffect(() => {
+    const client = supabase;
+    if (!client) return;
+    const shouldSync = (screen === "owner-dashboard" && Boolean(ownerPin)) || (screen === "student-menu" && Boolean(profile.id));
+    if (!shouldSync) return;
+    let cancelled = false;
+    const loadMenu = async () => {
+      const result = screen === "owner-dashboard"
+        ? await client.rpc("owner_get_coke_station_menu", { p_pin: ownerPin })
+        : await client.from("coke_station_menu").select("id, name, category, size, price, emoji, available").order("created_at", { ascending: true });
+      if (!cancelled && !result.error && result.data) setMenu((result.data as Record<string, unknown>[]).map(menuItemFromDatabase));
+    };
+    void loadMenu();
+    const timer = window.setInterval(() => { void loadMenu(); }, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [screen, ownerPin, profile.id]);
+  // An item marked out of stock on the owner's device is removed from any open student cart.
+  useEffect(() => {
+    setCart((current) => current.filter((row) => {
+      const latest = menu.find((item) => item.id === row.item.id);
+      return !latest || latest.available;
+    }));
+  }, [menu]);
 
   const notify = (message: string) => setToast(message);
   const hydrateProfile = async (session: SupabaseSession) => {
@@ -707,7 +748,8 @@ export default function App() {
     const phone = normalizeIndianPhone(input.phone);
     if (!/^\+91\d{10}$/.test(phone)) throw new Error("Enter a valid 10-digit Indian mobile number.");
     if (!supabaseConfigured || !supabase) {
-      // Keeps the reference UI usable until the public anon key is added.
+      if (isHostedEnvironment()) throw new Error("Cloud backend is not configured on this deployment. Add VITE_SUPABASE_ANON_KEY in Netlify and redeploy.");
+      // Keeps the reference UI usable locally until the public anon key is added.
       setProfile({ ...emptyProfile, name: input.name || "Vishwa S", phone });
       setScreen("student-menu");
       notify("Demo account loaded — connect Supabase for saved accounts");
@@ -789,10 +831,28 @@ export default function App() {
     setScreen("landing");
   };
   const addToCart = (item: MenuItem) => { if (!item.available) return notify(`${item.name} is out of stock`); setCart((current) => { const found = current.find((row) => row.item.id === item.id); return found ? current.map((row) => row.item.id === item.id ? { ...row, quantity: row.quantity + 1 } : row) : [...current, { item, quantity: 1 }]; }); };
+  const toggleMenuItem = async (id: string) => {
+    const item = menu.find((entry) => entry.id === id);
+    if (!item) return;
+    const nextAvailable = !item.available;
+    setMenu((current) => current.map((entry) => entry.id === id ? { ...entry, available: nextAvailable } : entry));
+    if (!supabase || !ownerPin) return;
+    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: nextAvailable, p_pin: ownerPin });
+    if (error || data === false) notify(error?.message || "Menu availability was not saved");
+  };
+  const addMenuItem = async (item: MenuItem) => {
+    const previous = menu;
+    setMenu((current) => [...current, item]);
+    if (!supabase || !ownerPin) { notify(`${item.name} added`); return; }
+    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: item.available, p_pin: ownerPin });
+    if (error || data === false) { setMenu(previous); notify(error?.message || "Menu item was not saved"); return; }
+    notify(`${item.name} added`);
+  };
   const changeQuantity = (id: string, delta: number) => setCart((current) => current.map((row) => row.item.id === id ? { ...row, quantity: row.quantity + delta } : row).filter((row) => row.quantity > 0));
   const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
     const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
     const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), studentId: profile.id, student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
+    if (isHostedEnvironment() && (!supabase || !supabaseConfigured)) throw new Error("Cloud backend is not configured. Ask the owner to add the Supabase environment variables in Netlify.");
     let savedOrder = order;
     if (supabase && supabaseConfigured) {
       if (!profile.id) throw new Error("Your session expired. Please log in again.");
@@ -935,7 +995,7 @@ export default function App() {
   else if (screen === "forgot-password") screenContent = <ForgotPasswordPage onBack={() => setScreen("student-login")} onSuccess={notify} />;
   else if (screen === "owner-pin") screenContent = <Login owner onBack={() => setScreen("landing")} onSuccess={(pin) => { setOwnerPin(pin || ""); setScreen("owner-dashboard"); }} />;
   else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
-  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={(id) => setMenu((current) => current.map((item) => item.id === id ? { ...item, available: !item.available } : item))} onAdd={(item) => { setMenu((current) => [...current, item]); notify(`${item.name} added`); }} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} onDownloadExcel={() => downloadDailySalesReport(orders)} />;
+  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} onDownloadExcel={() => downloadDailySalesReport(orders)} />;
 
   return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
 }
