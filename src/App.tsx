@@ -10,6 +10,7 @@ type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; 
 type PaymentMethod = "UPI" | "COD";
 type UpiApp = "Google Pay" | "PhonePe" | "Paytm" | "Other apps";
 type PaymentSettings = { upiId: string; qrCode: string | null };
+type StudentNotification = { id: string; title: string; message: string; emoji: string; tone: "preparing" | "ready" | "delivered" };
 const defaultPaymentSettings: PaymentSettings = { upiId: "7598981132@fam", qrCode: null };
 type Order = { id: string; createdAt: string; student: string; phone: string; hostel: string; room?: string; studentId?: string; items: { name: string; quantity: number }[]; total: number; payment: PaymentMethod; upiApp?: UpiApp; paymentStatus: "Pending" | "Paid" | "Failed" | "Cancelled"; status: "New" | "Preparing" | "Ready" | "Out for Delivery" | "Delivered" | "Cancelled" };
 type Shift = { id: string; openedAt: string; closedAt?: string; orderCount: number; online: number; cod: number; total: number; pending: number };
@@ -253,6 +254,13 @@ function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
   };
 }
 
+function getStudentStatusNotification(order: Order): StudentNotification | null {
+  if (order.status === "Preparing") return { id: `${order.id}-Preparing`, title: "Order Preparing!", message: "The kitchen is preparing your order.", emoji: "👨‍🍳", tone: "preparing" };
+  if (order.status === "Ready" || order.status === "Out for Delivery") return { id: `${order.id}-${order.status}`, title: "Out for Delivery!", message: `Your order is on the way to ${order.hostel || "your hostel"}!`, emoji: "🛵", tone: "ready" };
+  if (order.status === "Delivered") return { id: `${order.id}-Delivered`, title: "Order Delivered!", message: `Delivered to ${order.hostel || "your hostel"}. Enjoy your food! 🎉`, emoji: "🎉", tone: "delivered" };
+  return null;
+}
+
 function MiniCup() { return <span className="mini-cup"><i /><b /></span>; }
 function Brand({ owner = false, student = true, studentName = "Vishwa S" }: { owner?: boolean; student?: boolean; studentName?: string }) { return <div className="legacy-brand"><MiniCup /><div><strong>Coke Station</strong><small>{owner ? "OWNER DASHBOARD" : student ? `👋 ${studentName.toUpperCase()}` : "Hostel Night Canteen"}</small></div></div>; }
 function Modal({ title, subtitle, onClose, children, wide = false, className = "" }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode; wide?: boolean; className?: string }) { return <div className="dark-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className={`dark-modal ${wide ? "wide" : ""} ${className}`}><div className="dark-modal-header"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="dark-close" onClick={onClose}><Icon name="close" size={17} /></button></div>{children}</div></div>; }
@@ -297,6 +305,11 @@ function Login({ owner, register, onBack, onSuccess, onRegister, onStudentAuth }
 function StudentHeader({ onHistory, onLogout, onCart, onProfile, studentName, cartCount, cartTotal }: { onHistory: () => void; onLogout: () => void; onCart: () => void; onProfile: () => void; studentName: string; cartCount: number; cartTotal: number }) {
   const [menuOpen, setMenuOpen] = useState(false);
   return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div></header>;
+}
+
+function StudentStatusNotification({ notification, onClose }: { notification: StudentNotification | null; onClose: () => void }) {
+  if (!notification) return null;
+  return <div className={`student-status-notification ${notification.tone}`} role="status" aria-live="polite"><div className="student-status-icon">{notification.emoji}</div><div className="student-status-copy"><strong>{notification.title}</strong><span>{notification.message}</span></div><button className="student-status-close" onClick={onClose} aria-label="Dismiss notification">×</button></div>;
 }
 
 function StudentProduct({ product, quantity, onAdd, onQuantity }: { product: MenuItem; quantity: number; onAdd: (item: MenuItem) => void; onQuantity: (id: string, delta: number) => void }) { return <article className={`student-product ${quantity > 0 ? "in-cart" : ""} ${!product.available ? "sold-out" : ""}`}><div className="product-emoji">{product.emoji}</div><div className="student-product-copy"><b>{product.name}</b>{!product.available && <span className="stock-badge">OUT OF STOCK</span>}<span>{product.size}</span><strong>{money(product.price)}</strong></div>{!product.available ? <button className="product-add" disabled>Out of Stock</button> : quantity > 0 ? <div className="product-stepper"><button aria-label={`Remove one ${product.name}`} onClick={() => onQuantity(product.id, -1)}>−</button><span>{quantity}</span><button aria-label={`Add one ${product.name}`} onClick={() => onQuantity(product.id, 1)}>+</button></div> : <button className="product-add" onClick={() => onAdd(product)}>+ Add</button>}</article>; }
@@ -402,7 +415,7 @@ function ForgotPasswordPage({ onBack, onSuccess }: { onBack: () => void; onSucce
   return <div className="auth-page forgot-page"><div className="auth-brand forgot-brand"><MiniCup /><h1>Coke Station</h1><p>Hostel Night Canteen · Open 7PM onwards</p><button className="phone-badge phone-login-nav" onClick={onBack}>📱 &nbsp;Phone + Password Login</button></div><form className="auth-form forgot-form" onSubmit={step === "details" ? verifyDetails : updatePassword}>{success ? <div className="forgot-success"><div className="password-success-icon"><Icon name="check" size={27} /></div><h2>Password reset successful</h2><p>You can now log in with your registered phone number and new password.</p><PrimaryButton type="button" className="auth-submit" onClick={onBack}>Back to login <Icon name="arrow" size={17} /></PrimaryButton></div> : step === "details" ? <><h2>Forgot Password</h2><p className="forgot-subtitle">Enter your details</p><label><span>STUDENT NAME</span><input autoFocus value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Your full name" autoComplete="name" required /></label><label><span>REGISTERED PHONE NUMBER</span><input value={phoneInput} onChange={(event) => setPhoneInput(event.target.value.replace(/[^\d+\s-]/g, ""))} placeholder="10-digit mobile number" inputMode="tel" autoComplete="tel" required /></label><p className="privacy-note">We’ll verify both details before letting you choose a new password.</p><PrimaryButton type="submit" className="auth-submit">{saving ? "Verifying…" : "Verify Details"} {!saving && <Icon name="arrow" size={17} />}</PrimaryButton></> : <><h2>Create a new password</h2><p className="forgot-subtitle">Your name and phone number are verified.</p><div className="forgot-step-note"><span>✓</span><p>Set a new password for {displayPhone(phone)}.</p></div><PasswordField label="NEW PASSWORD" placeholder="Minimum 6 characters" value={newPassword} onChange={setNewPassword} visible={showNew} onToggle={() => setShowNew(!showNew)} /><PasswordField label="CONFIRM NEW PASSWORD" placeholder="Re-enter new password" value={confirmPassword} onChange={setConfirmPassword} visible={showConfirm} onToggle={() => setShowConfirm(!showConfirm)} /><PrimaryButton type="submit" className="auth-submit green-submit">{saving ? "Updating…" : "Update Password"} {!saving && <Icon name="check" size={17} />}</PrimaryButton></>}{error && <p className="auth-error forgot-error">{error}</p>}{!success && <button type="button" className="back-link" onClick={onBack}>← Back</button>}</form></div>;
 }
 
-function StudentMenu({ menu, cart, shopOpen, profile, onUpdatePassword, onAdd, onQuantity, onHistory, onCart, onCheckout, onLogout }:  { menu: MenuItem[]; cart: { item: MenuItem; quantity: number }[]; shopOpen: boolean; profile: StudentProfile; onUpdatePassword: (credentials: { currentPassword: string; newPassword: string }) => void | Promise<void>; onAdd: (item: MenuItem) => void; onQuantity: (id: string, delta: number) => void; onHistory: () => void; onCart: () => void; onCheckout: (hostel?: string) => void; onLogout: () => void }) {
+function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNotification, onUpdatePassword, onAdd, onQuantity, onHistory, onCart, onCheckout, onLogout }:  { menu: MenuItem[]; cart: { item: MenuItem; quantity: number }[]; shopOpen: boolean; profile: StudentProfile; notification: StudentNotification | null; onDismissNotification: () => void; onUpdatePassword: (credentials: { currentPassword: string; newPassword: string }) => void | Promise<void>; onAdd: (item: MenuItem) => void; onQuantity: (id: string, delta: number) => void; onHistory: () => void; onCart: () => void; onCheckout: (hostel?: string) => void; onLogout: () => void }) {
   const [category, setCategory] = useState<Category>("All");
   const [hostel, setHostel] = useState(profile.hostel || "");
   const [cartOpen, setCartOpen] = useState(false);
@@ -413,8 +426,8 @@ function StudentMenu({ menu, cart, shopOpen, profile, onUpdatePassword, onAdd, o
   const selectedHostel = hostels.find((item) => item.name === hostel);
   const cartCount = cart.reduce((sum, row) => sum + row.quantity, 0);
   const cartTotal = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
-  if (!shopOpen) return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><div className="closed-student"><div className="closed-cup">🥤</div><span className="live-label">● SERVICE PAUSED</span><h1>Shop is closed</h1><p>We usually deliver from 7:00 PM to 2:00 AM.<br />Please come back during the night shift.</p><button className="dark-outline-button" onClick={onHistory}>View order history</button></div>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}</div>;
-  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><div className="hostel-bar"><span>🏠</span><select value={hostel} onChange={(event) => setHostel(event.target.value)}><HostelOptions /></select>{selectedHostel && <div className="hostel-location"><span>📍 {selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined ? `${selectedHostel.latitude.toFixed(6)}, ${selectedHostel.longitude.toFixed(6)}` : "GPS location not added yet"}</span>{selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined && <a href={`https://www.google.com/maps?q=${selectedHostel.latitude},${selectedHostel.longitude}`} target="_blank" rel="noreferrer">View map</a>}</div>}</div><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">No items in this category.</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => onCheckout(hostel)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
+  if (!shopOpen) return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><div className="closed-student"><div className="closed-cup">🥤</div><span className="live-label">● SERVICE PAUSED</span><h1>Shop is closed</h1><p>We usually deliver from 7:00 PM to 2:00 AM.<br />Please come back during the night shift.</p><button className="dark-outline-button" onClick={onHistory}>View order history</button></div>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}</div>;
+  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><div className="hostel-bar"><span>🏠</span><select value={hostel} onChange={(event) => setHostel(event.target.value)}><HostelOptions /></select>{selectedHostel && <div className="hostel-location"><span>📍 {selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined ? `${selectedHostel.latitude.toFixed(6)}, ${selectedHostel.longitude.toFixed(6)}` : "GPS location not added yet"}</span>{selectedHostel.latitude !== undefined && selectedHostel.longitude !== undefined && <a href={`https://www.google.com/maps?q=${selectedHostel.latitude},${selectedHostel.longitude}`} target="_blank" rel="noreferrer">View map</a>}</div>}</div><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">No items in this category.</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => onCheckout(hostel)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
 function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
@@ -564,6 +577,9 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [ownerPin, setOwnerPin] = useState("");
   const [profile, setProfile] = useState<StudentProfile>(emptyProfile);
+  const [studentNotification, setStudentNotification] = useState<StudentNotification | null>(null);
+  const studentOrderStatuses = useRef<Record<string, Order["status"]>>({});
+  const studentOrderSnapshotReady = useRef(false);
   const [profileError, setProfileError] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [menu, setMenu] = useState<MenuItem[]>(() => read("legacy-coke-menu", defaultMenu));
@@ -644,6 +660,7 @@ export default function App() {
     setCart(cartByAccount[accountKey] || []);
   }, [accountKey]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2800); return () => window.clearTimeout(timer); }, [toast]);
+  useEffect(() => { if (!studentNotification) return; const timer = window.setTimeout(() => setStudentNotification(null), 5600); return () => window.clearTimeout(timer); }, [studentNotification?.id]);
   // Menu is shared through Supabase; localStorage is only a fallback until the migration is run.
   useEffect(() => {
     const client = supabase;
@@ -733,6 +750,9 @@ export default function App() {
         setCart([]);
         setCartOpen(false);
         setCheckoutOpen(false);
+        setStudentNotification(null);
+        studentOrderStatuses.current = {};
+        studentOrderSnapshotReady.current = false;
         setProfile(emptyProfile);
         setScreen("landing");
       } else if (session) {
@@ -826,6 +846,9 @@ export default function App() {
     setCartOpen(false);
     setCheckoutOpen(false);
     setOrderPlaced(null);
+    setStudentNotification(null);
+    studentOrderStatuses.current = {};
+    studentOrderSnapshotReady.current = false;
     setProfile(emptyProfile);
     setOwnerPin("");
     setScreen("landing");
@@ -972,7 +995,21 @@ export default function App() {
   const fetchStudentOrders = async () => {
     if (!supabase || !profile.id) return;
     const { data, error } = await supabase.from("coke_station_orders").select("*").eq("student_id", profile.id).order("created_at", { ascending: false });
-    if (!error && data) setOrders((data as Record<string, unknown>[]).map(orderFromDatabase));
+    if (error || !data) return;
+    const nextOrders = (data as Record<string, unknown>[]).map(orderFromDatabase);
+    const previousStatuses = studentOrderStatuses.current;
+    if (studentOrderSnapshotReady.current) {
+      for (const order of nextOrders) {
+        const previousStatus = previousStatuses[order.id];
+        if (previousStatus && previousStatus !== order.status) {
+          const notification = getStudentStatusNotification(order);
+          if (notification) setStudentNotification(notification);
+        }
+      }
+    }
+    studentOrderStatuses.current = Object.fromEntries(nextOrders.map((order) => [order.id, order.status]));
+    studentOrderSnapshotReady.current = true;
+    setOrders(nextOrders);
   };
   const fetchOwnerOrders = async () => {
     if (!supabase || !ownerPin) return;
@@ -994,7 +1031,7 @@ export default function App() {
   else if (screen === "student-register") screenContent = <Login register onBack={() => setScreen("landing")} onSuccess={() => setScreen("student-menu")} onRegister={() => setScreen("student-login")} onStudentAuth={handleStudentAuth} />;
   else if (screen === "forgot-password") screenContent = <ForgotPasswordPage onBack={() => setScreen("student-login")} onSuccess={notify} />;
   else if (screen === "owner-pin") screenContent = <Login owner onBack={() => setScreen("landing")} onSuccess={(pin) => { setOwnerPin(pin || ""); setScreen("owner-dashboard"); }} />;
-  else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
+  else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} notification={studentNotification} onDismissNotification={() => setStudentNotification(null)} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
   else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} onDownloadExcel={() => downloadDailySalesReport(orders)} />;
 
   return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
