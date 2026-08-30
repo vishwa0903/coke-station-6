@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
+import QRCode from "qrcode";
 
+const SHOP_NAME = "Coke Station";
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
 type Category = "All" | "Maggie" | "Eggs" | "Sandwiches" | "Hot Drinks" | "Cold Drinks" | "Snacks";
 type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; size: string; price: number; emoji: string; available: boolean };
@@ -12,7 +14,7 @@ type PaymentSettings = { upiId: string; qrCode: string | null };
 type StudentNotification = { id: string; title: string; message: string; emoji: string; tone: "preparing" | "ready" | "delivered" | "cancelled" };
 const defaultPaymentSettings: PaymentSettings = { upiId: "7598981132@fam", qrCode: null };
 const MINIMUM_ORDER = 60;
-type Order = { id: string; createdAt: string; student: string; phone: string; hostel: string; room?: string; studentId?: string; items: { name: string; quantity: number }[]; total: number; payment: PaymentMethod; upiApp?: UpiApp; paymentStatus: "Pending" | "Paid" | "Failed" | "Cancelled"; status: "New" | "Preparing" | "Ready" | "Out for Delivery" | "Delivered" | "Cancelled" };
+type Order = { id: string; createdAt: string; student: string; phone: string; hostel: string; room?: string; studentId?: string; items: { name: string; quantity: number }[]; total: number; payment: PaymentMethod; upiApp?: UpiApp; paymentStatus: "Pending" | "Paid" | "Failed" | "Cancelled"; status: "New" | "Preparing" | "Ready" | "Out for Delivery" | "Delivered" | "Cancelled"; paymentConfirmedManually?: boolean };
 type Shift = { id: string; openedAt: string; closedAt?: string; orderCount: number; online: number; cod: number; total: number; pending: number };
 type StudentProfile = { id?: string; name: string; phone: string; hostel: string; room: string };
 type StudentAuthInput = { name: string; phone: string; password: string; register: boolean };
@@ -169,6 +171,7 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
     upiApp: typeof row.upi_app === "string" && row.upi_app ? row.upi_app as UpiApp : undefined,
     paymentStatus: paymentStatuses.includes(rawPaymentStatus as Order["paymentStatus"]) ? rawPaymentStatus as Order["paymentStatus"] : "Pending",
     status: statuses.includes(rawStatus as Order["status"]) ? rawStatus as Order["status"] : "New",
+    paymentConfirmedManually: row.payment_confirmed_manually === true,
   };
 }
 
@@ -458,7 +461,7 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onReject, onAdvance, 
       <div className="old-owner-actions">{onlinePaymentPending && <button className="confirm-payment" onClick={() => onPayment(order.id, "UPI")}>✓ Accept order</button>}{onlinePaymentNeedsDecision && <button className="reject-order-button" onClick={() => onReject(order.id)}>✕ Reject order</button>}{!onlinePaymentNeedsDecision && order.status === "New" && <button className="old-next new-next" onClick={() => onAdvance(order.id)}>→ Mark as Preparing</button>}{order.status === "Preparing" && <button className="old-next preparing-next" onClick={() => onAdvance(order.id)}>→ Mark as Ready</button>}{order.status === "Ready" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Ready" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{(order.status === "Ready" || order.status === "Out for Delivery") && !activeFlow && (hostelLocation?.latitude !== undefined && hostelLocation.longitude !== undefined ? <button className="navigate-hostel-button" type="button" onClick={() => openHostelDirections(hostelLocation, onNavigate)}>📍 Navigate to {order.hostel}</button> : <span className="no-navigation">📍 No location for {order.hostel}</span>)}</div>
       {activeFlow && activeFlow.step === "choose" && <div className="delivery-payment-panel choose-payment"><strong>💳 Collect payment from the student first</strong><button className="cash-received-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "cash", error: "" })}>💵 Cash Received</button><button className="pay-online-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "online", error: "" })}>📱 Pay Online (UPI / QR)</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div>}
       {activeFlow && activeFlow.step === "cash" && <div className="delivery-payment-panel cash-payment"><strong>💵 Cash Received — enter the exact amount</strong><div className="cash-entry"><span>₹</span><input type="number" min="0" value={activeFlow.cashAmount} onChange={(event) => setDeliveryFlow({ ...activeFlow, cashAmount: event.target.value, error: "" })} /><button onClick={confirmCash}>✓ Confirm Cash Received</button></div>{activeFlow.error && <p className="payment-flow-error">{activeFlow.error}</p>}<button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
-      {activeFlow && activeFlow.step === "online" && <div className="delivery-payment-panel online-payment"><strong>📱 Pay Online — show this to the student</strong><div className="delivery-online-body">{paymentSettings.qrCode ? <img src={paymentSettings.qrCode} alt="Food stall QR code" /> : <FakeQR />}<div><span>AMOUNT TO COLLECT</span><b>{money(order.total)}</b><span>UPI ID</span><strong>{paymentSettings.upiId}</strong></div></div><button className="confirm-online-button" onClick={confirmOnline}>✓ Confirm Online Payment Received</button><button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
+      {activeFlow && activeFlow.step === "online" && <div className="delivery-payment-panel online-payment"><strong>📱 Pay Online — show this to the student</strong><div className="delivery-online-body"><UpiPaymentQr upiId={paymentSettings.upiId} amount={order.total} /><div><span>AMOUNT TO COLLECT</span><b>{money(order.total)}</b><span>UPI ID</span><strong>{paymentSettings.upiId}</strong></div></div><button className="confirm-online-button" onClick={confirmOnline}>✓ Confirm Online Payment Received</button><button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
       {activeFlow && activeFlow.step === "complete" && <div className="delivery-payment-panel complete-payment"><strong>✓ {money(order.total)} received via {order.payment === "COD" ? "💵 Cash" : "💳 UPI"}</strong><div><button className="complete-delivery-button" onClick={() => { onCompleteDelivery(order.id); setDeliveryFlow(null); }}>🚚 Complete Mark as Delivered</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div></div>}
     </article>;
   })}</div> : <div className="owner-empty-state"><span>📫</span><h3>No orders yet</h3><p>Orders from students will appear here</p></div>}</section>;
@@ -496,6 +499,24 @@ function PaymentModal({ settings, onClose, onSave }: { settings: PaymentSettings
   return <Modal title="💳 Online Payment Update" subtitle="UPI ID and QR code used for delivery-time payments" onClose={onClose}><div className="payment-tabs"><button type="button" className={tab === "upi" ? "active blue" : ""} onClick={() => setTab("upi")}>🧾 UPI Update</button><button type="button" className={tab === "qr" ? "active green" : ""} onClick={() => setTab("qr")}>🖼️ QR Code Update</button></div>{tab === "upi" ? <div className="payment-update-form"><label><span>FOOD STALL UPI ID</span><input value={upi} onChange={(event) => setUpi(event.target.value)} placeholder="stall@upi" autoComplete="off" /></label><p>This UPI ID is shown to the student when they pay online.</p><button className="blue-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ UPI ID Saved" : "💾 Save UPI ID"}</button>{error && <p className="payment-error">{error}</p>}</div> : <div className="qr-update-form"><span className="qr-label">FOOD STALL UPI QR CODE</span><div className="qr-preview">{qrCode ? <img className="uploaded-qr" src={qrCode} alt="Uploaded food stall UPI QR code" /> : <FakeQR />}<small>{qrCode ? "✓ Current QR code preview" : "No QR code uploaded yet"}</small></div><label className="replace-qr">🔄 {qrCode ? "Replace QR Code" : "Upload QR Code"}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadQr} /></label>{qrCode && <button className="remove-qr" type="button" onClick={() => setQrCode(null)}>Remove QR code</button>}<button className="green-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ QR Code Saved" : "💾 Save QR Code"}</button>{error && <p className="payment-error">{error}</p>}</div>}</Modal>;
 }
 function FakeQR() { const bits = [1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,1,0,1,1,0,0,1,0,1,1,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,1,0,1,1,0]; return <div className="fake-qr-grid">{bits.map((bit, i) => <i className={bit ? "on" : ""} key={i} />)}</div>; }
+// Builds a standard UPI deep-link URI with the exact order amount baked in, so
+// scanning it pre-fills the amount — no payment gateway/provider is involved,
+// this is just the plain UPI URI scheme every UPI app already understands.
+function buildUpiUri(upiId: string, amount: number) {
+  return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(SHOP_NAME)}&am=${amount}&cu=INR`;
+}
+function UpiPaymentQr({ upiId, amount }: { upiId: string; amount: number }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDataUrl(null);
+    QRCode.toDataURL(buildUpiUri(upiId, amount), { margin: 1, width: 220 })
+      .then((url) => { if (!cancelled) setDataUrl(url); })
+      .catch(() => { if (!cancelled) setDataUrl(null); });
+    return () => { cancelled = true; };
+  }, [upiId, amount]);
+  return dataUrl ? <img className="upi-dynamic-qr" src={dataUrl} alt={`Scan to pay ${money(amount)} via UPI to ${upiId}`} /> : <FakeQR />;
+}
 function ConfirmModal({ kind, shopOpen = true, onClose, onConfirm }: { kind: "shop" | "scratch"; shopOpen?: boolean; onClose: () => void; onConfirm: () => void }) { const shop = kind === "shop"; const closing = shop && shopOpen; return <Modal title={shop ? (closing ? "Close Coke Station?" : "Open Coke Station?") : "Scratch and start a new shift?"} onClose={onClose} className={`confirm-modal ${shop ? (closing ? "red-confirm" : "green-confirm-modal") : "orange-confirm"}`}><div className="confirm-content"><div className={`confirm-icon ${shop ? (closing ? "red-status" : "green-status") : "orange-status"}`}><span /></div><p>{shop ? (closing ? "Students will immediately see the Shop Closed screen and will not be able to browse the menu or place an order." : "Students will be able to browse the menu and place orders as soon as the shop opens.") : "Shift orders, Online Received, COD Received and Grand Total will all return to zero. Previous orders and money records will remain safely available in History."}</p><button className={shop && closing ? "red-confirm-button" : shop ? "green-confirm-button" : "orange-confirm-button"} onClick={onConfirm}>{shop ? (closing ? "Yes, Close Shop" : "Yes, Open Shop") : "Yes, Scratch Everything to Zero"}</button><button className="cancel-confirm" onClick={onClose}>Cancel</button></div></Modal>; }
 
 type ShopSession = { id: string; openedAt: string; closedAt: string | null };
@@ -975,9 +996,11 @@ export default function App() {
     }
     notify("Payment settings saved");
   };
-  const syncOwnerOrder = async (orderRef: string, status: Order["status"], paymentStatus: Order["paymentStatus"], paymentMethod: PaymentMethod) => {
+  const syncOwnerOrder = async (orderRef: string, status: Order["status"], paymentStatus: Order["paymentStatus"], paymentMethod: PaymentMethod, paymentConfirmedManually?: boolean) => {
     if (!supabase || !ownerPin) return;
-    const { data, error } = await supabase.rpc("owner_update_coke_station_order", { p_order_ref: orderRef, p_status: status, p_payment_status: paymentStatus, p_payment_method: paymentMethod, p_pin: ownerPin });
+    const params: Record<string, unknown> = { p_order_ref: orderRef, p_status: status, p_payment_status: paymentStatus, p_payment_method: paymentMethod, p_pin: ownerPin };
+    if (paymentConfirmedManually !== undefined) params.p_payment_confirmed_manually = paymentConfirmedManually;
+    const { data, error } = await supabase.rpc("owner_update_coke_station_order", params);
     const ordersBackendMissing = error && ["42883", "PGRST202", "42P01"].includes(error.code || "");
     if ((error && !ordersBackendMissing) || data === false) notify(error?.message || "Order update was not saved");
     else if (ordersBackendMissing) notify("Updated on this device — run ORDERS_BACKEND.sql to sync the owner dashboard");
@@ -993,8 +1016,8 @@ export default function App() {
   const confirmPayment = (id: string, method: PaymentMethod = "UPI") => {
     const order = orders.find((item) => item.id === id);
     if (!order) return;
-    setOrders((current) => current.map((item) => item.id === id ? { ...item, paymentStatus: "Paid", payment: method } : item));
-    void syncOwnerOrder(id, order.status, "Paid", method);
+    setOrders((current) => current.map((item) => item.id === id ? { ...item, paymentStatus: "Paid", payment: method, paymentConfirmedManually: true } : item));
+    void syncOwnerOrder(id, order.status, "Paid", method, true);
     notify("Order accepted — payment confirmed");
   };
   const rejectOrder = (id: string) => {
