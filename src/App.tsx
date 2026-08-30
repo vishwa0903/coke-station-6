@@ -195,8 +195,14 @@ function buildDailySalesRows(orders: Order[]) {
   }
   return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
-function applyExcelStyle(cell: { s?: unknown; z?: string }, style: unknown, numberFormat?: string) {
-  cell.s = style;
+function applyExcelStyle(cell: { s?: unknown; z?: string }, style: object, numberFormat?: string) {
+  // Give every cell its own style object. xlsx-js-style caches generated Excel
+  // styles by the identity/content of this object, so if two cells shared the
+  // same object reference here, the FIRST number format assigned to that
+  // object (e.g. the Date column's "dd-mm-yyyy") could get reused for other
+  // cells sharing the reference (e.g. the plain-number "Total Orders" column),
+  // making numbers like 4 or 15 render as dates (04-01-1900, 15-01-1900).
+  cell.s = { ...style };
   if (numberFormat) cell.z = numberFormat;
 }
 function downloadDailySalesReport(orders: Order[]) {
