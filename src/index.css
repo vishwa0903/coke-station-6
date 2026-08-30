@@ -410,11 +410,8 @@ input, select { outline: none; }
 .delivered-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 8px; padding: 0 10px; border: 1px solid #3d354c; border-radius: 8px; background: #211e2b; color: #a69bab; font-size: 9px; font-weight: 900; }.rejected-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 8px; padding: 0 10px; border: 1px solid #6b303b; border-radius: 8px; background: #351d24; color: #f17a7d; font-size: 9px; font-weight: 900; }
 
 .history-modal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 17px 0; color: #817989; font-size: 9px; }
-.download-excel-button { min-height: 35px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border: 1px solid #2a8b56; border-radius: 7px; background: #142c21; color: #53e27f; font-size: 9px; font-weight: 900; }
-.download-excel-button:hover { background: #1b4830; color: #83f5a4; transform: translateY(-1px); }
 @media (max-width: 620px) {
   .history-modal-toolbar { align-items: flex-start; flex-direction: column; padding: 12px 11px 0; }
-  .download-excel-button { width: 100%; justify-content: center; }
 }
 
 /* Student status notification banner; no bell, dropdown, or history is added. */

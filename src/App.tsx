@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
-import * as XLSX from "xlsx-js-style";
 
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
 type Category = "All" | "Maggie" | "Eggs" | "Sandwiches" | "Hot Drinks" | "Cold Drinks" | "Snacks";
@@ -173,85 +172,6 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
   };
 }
 
-type DailySalesRow = { key: string; day: number; month: number; year: number; totalOrders: number; onlineReceived: number; codReceived: number; grandTotal: number };
-function getIndiaDateParts(value: string) {
-  const parts = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value));
-  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value || 0);
-  return { year: part("year"), month: part("month"), day: part("day") };
-}
-function buildDailySalesRows(orders: Order[]) {
-  const groups = new Map<string, DailySalesRow>();
-  for (const order of orders) {
-    const { year, month, day } = getIndiaDateParts(order.createdAt);
-    const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const existing = groups.get(key) || { key, day, month, year, totalOrders: 0, onlineReceived: 0, codReceived: 0, grandTotal: 0 };
-    existing.totalOrders += 1;
-    if (order.status !== "Cancelled" && order.paymentStatus === "Paid") {
-      if (order.payment === "UPI") existing.onlineReceived += order.total;
-      if (order.payment === "COD") existing.codReceived += order.total;
-      existing.grandTotal = existing.onlineReceived + existing.codReceived;
-    }
-    groups.set(key, existing);
-  }
-  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
-}
-function applyExcelStyle(cell: { s?: unknown; z?: string }, style: object, numberFormat?: string) {
-  // Give every cell its own style object. xlsx-js-style caches generated Excel
-  // styles by the identity/content of this object, so if two cells shared the
-  // same object reference here, the FIRST number format assigned to that
-  // object (e.g. the Date column's "dd-mm-yyyy") could get reused for other
-  // cells sharing the reference (e.g. the plain-number "Total Orders" column),
-  // making numbers like 4 or 15 render as dates (04-01-1900, 15-01-1900).
-  cell.s = { ...style };
-  if (numberFormat) cell.z = numberFormat;
-}
-function downloadDailySalesReport(orders: Order[]) {
-  const dailyRows = buildDailySalesRows(orders);
-  const grandOrders = dailyRows.reduce((sum, row) => sum + row.totalOrders, 0);
-  const grandOnline = dailyRows.reduce((sum, row) => sum + row.onlineReceived, 0);
-  const grandCod = dailyRows.reduce((sum, row) => sum + row.codReceived, 0);
-  const grandTotal = grandOnline + grandCod;
-  const generatedAt = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(new Date());
-  const sheetRows: (string | number | Date)[][] = [
-    ["Coke Station — Daily Sales Report"],
-    [`Generated: ${generatedAt} · Confirmed payments only`],
-    [],
-    ["Date", "Total Orders", "Online Received", "COD Received", "Grand Total"],
-    ...dailyRows.map((row) => [new Date(`${row.key}T00:00:00+05:30`), row.totalOrders, row.onlineReceived, row.codReceived, row.grandTotal]),
-    ["TOTAL", grandOrders, grandOnline, grandCod, grandTotal],
-  ];
-  const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
-  const headerRow = 3;
-  const firstDataRow = 4;
-  const totalRow = firstDataRow + dailyRows.length;
-  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } }];
-  worksheet["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 20 }, { wch: 17 }, { wch: 16 }];
-  worksheet["!autofilter"] = { ref: `A${headerRow + 1}:E${Math.max(headerRow + 1, totalRow)}` };
-  // xlsx-js-style preserves these worksheet view settings in compatible Excel readers.
-  (worksheet as unknown as { [key: string]: unknown })["!freeze"] = { ySplit: headerRow + 1, topLeftCell: `A${firstDataRow + 1}`, state: "frozen" };
-  const titleStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 16 }, fill: { patternType: "solid", fgColor: { rgb: "8F1017" } }, alignment: { horizontal: "center", vertical: "center" } };
-  const metaStyle = { font: { italic: true, color: { rgb: "6F6878" }, sz: 10 }, alignment: { horizontal: "left" } };
-  const headerStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { patternType: "solid", fgColor: { rgb: "2A2536" } }, alignment: { horizontal: "center", vertical: "center" }, border: { top: { style: "thin", color: { rgb: "4F475E" } }, bottom: { style: "thin", color: { rgb: "4F475E" } }, left: { style: "thin", color: { rgb: "4F475E" } }, right: { style: "thin", color: { rgb: "4F475E" } } } };
-  const bodyStyle = { font: { color: { rgb: "3A333C" }, sz: 10 }, alignment: { vertical: "center" }, border: { bottom: { style: "thin", color: { rgb: "DED7D0" } }, left: { style: "thin", color: { rgb: "E8E2DC" } }, right: { style: "thin", color: { rgb: "E8E2DC" } } } };
-  const totalStyle = { font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 }, fill: { patternType: "solid", fgColor: { rgb: "2E7D4E" } }, alignment: { vertical: "center" }, border: { top: { style: "medium", color: { rgb: "1B5A35" } }, bottom: { style: "medium", color: { rgb: "1B5A35" } } } };
-  applyExcelStyle(worksheet.A1, titleStyle);
-  applyExcelStyle(worksheet.A2, metaStyle);
-  for (let column = 0; column < 5; column += 1) applyExcelStyle(worksheet[XLSX.utils.encode_cell({ r: headerRow, c: column })], headerStyle);
-  for (let row = firstDataRow; row < totalRow; row += 1) {
-    for (let column = 0; column < 5; column += 1) {
-      const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: column })];
-      applyExcelStyle(cell, bodyStyle, column > 1 ? "₹#,##0" : column === 0 ? "dd-mm-yyyy" : undefined);
-    }
-  }
-  for (let column = 0; column < 5; column += 1) {
-    const cell = worksheet[XLSX.utils.encode_cell({ r: totalRow, c: column })];
-    applyExcelStyle(cell, totalStyle, column > 1 ? "₹#,##0" : undefined);
-  }
-  worksheet["!rows"] = [{ hpt: 28 }, { hpt: 18 }, { hpt: 8 }, { hpt: 24 }, ...dailyRows.map(() => ({ hpt: 20 })), { hpt: 24 }];
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Daily Sales");
-  XLSX.writeFile(workbook, "Coke_Station_Daily_Sales_Report.xlsx");
-}
 
 function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
   const categories: Exclude<Category, "All">[] = ["Maggie", "Eggs", "Sandwiches", "Hot Drinks", "Cold Drinks", "Snacks"];
@@ -592,7 +512,7 @@ function computeSessionStats(session: { openedAt: string; closedAt: string | nul
   const pending = sessionOrders.filter((order) => order.paymentStatus === "Pending").length;
   return { orderCount: sessionOrders.length, online, cod, total: online + cod, pending };
 }
-function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt, onClose, onDelete, onDownloadExcel }: { orders: Order[]; ownerPin: string; shifts: Shift[]; shopOpen: boolean; shiftStartedAt: string; onClose: () => void; onDelete: (id: string) => void; onDownloadExcel: () => void }) {
+function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt, onClose, onDelete }: { orders: Order[]; ownerPin: string; shifts: Shift[]; shopOpen: boolean; shiftStartedAt: string; onClose: () => void; onDelete: (id: string) => void }) {
   // Session open/close boundaries are the shared source of truth in Supabase
   // (owner_list_coke_shop_sessions) — every order count below is computed
   // live from the real orders list against those boundaries. This avoids the
@@ -632,9 +552,9 @@ function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt,
   const online = paidNonCancelled.filter((order) => order.payment === "UPI").reduce((sum, order) => sum + order.total, 0);
   const cod = paidNonCancelled.filter((order) => order.payment === "COD").reduce((sum, order) => sum + order.total, 0);
   const legacyCompletedShifts = usingSyncedSessions ? [] : shifts.filter((shift) => shift.closedAt);
-  return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span><button className="download-excel-button" onClick={onDownloadExcel}>📥 Download Excel</button></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div>{loadError && <p className="history-load-error">{loadError}</p>}<div className="history-session-list">{sessions === null && <p className="history-loading">Loading synced session history…</p>}{usingSyncedSessions ? <>{shopOpen && currentSession && liveStats && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(currentSession.openedAt)} · {clock(currentSession.openedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveStats.orderCount} {liveStats.orderCount === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveStats.online)}</b><small>confirmed</small></span><span>COD <b>{money(liveStats.cod)}</b><small>confirmed</small></span><span>TOTAL <b>{money(liveStats.total)}</b><small>{liveStats.pending} pending</small></span></div></div>}{completedSessions.map((session) => { const stats = computeSessionStats(session, orders); return <div className="history-session" key={session.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(session.openedAt)}</small><small>Closed: {dateTime(session.closedAt || session.openedAt)}</small></div><div className="session-actions"><strong>{stats.orderCount} {stats.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(session.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(stats.online)}</b><small>{stats.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(stats.cod)}</b><small>{stats.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(stats.total)}</b><small>{stats.pending} pending</small></span></div></div>; })}</> : <>{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime()).length} orders</strong></div></div>}{legacyCompletedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</>}</div></Modal>;
+  return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div>{loadError && <p className="history-load-error">{loadError}</p>}<div className="history-session-list">{sessions === null && <p className="history-loading">Loading synced session history…</p>}{usingSyncedSessions ? <>{shopOpen && currentSession && liveStats && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(currentSession.openedAt)} · {clock(currentSession.openedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveStats.orderCount} {liveStats.orderCount === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveStats.online)}</b><small>confirmed</small></span><span>COD <b>{money(liveStats.cod)}</b><small>confirmed</small></span><span>TOTAL <b>{money(liveStats.total)}</b><small>{liveStats.pending} pending</small></span></div></div>}{completedSessions.map((session) => { const stats = computeSessionStats(session, orders); return <div className="history-session" key={session.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(session.openedAt)}</small><small>Closed: {dateTime(session.closedAt || session.openedAt)}</small></div><div className="session-actions"><strong>{stats.orderCount} {stats.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(session.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(stats.online)}</b><small>{stats.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(stats.cod)}</b><small>{stats.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(stats.total)}</b><small>{stats.pending} pending</small></span></div></div>; })}</> : <>{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime()).length} orders</strong></div></div>}{legacyCompletedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</>}</div></Modal>;
 }
-function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onPaymentSave, onAdvance, onPay, onReject, onCompleteDelivery, onCall, onNavigate, onDeleteShift, onDownloadExcel }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onReject: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void; onDownloadExcel: () => void }) {
+function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onPaymentSave, onAdvance, onPay, onReject, onCompleteDelivery, onCall, onNavigate, onDeleteShift }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onReject: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void }) {
   const [actionMenu, setActionMenu] = useState(false);
   const [modal, setModal] = useState<"shop" | "scratch" | "menu" | "payment" | "history" | null>(null);
   useEffect(() => {
@@ -645,7 +565,7 @@ function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSetti
   const currentShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime());
   const paidOnline = currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
   const paidCod = currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
-  return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} newOrderCount={currentShiftOrders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(currentShiftOrders.length)} helper={`since ${clock(shiftStartedAt)}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={currentShiftOrders} paymentSettings={paymentSettings} onPayment={onPay} onReject={onReject} onAdvance={onAdvance} onCompleteDelivery={onCompleteDelivery} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} ownerPin={ownerPin} shifts={shifts} shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} onClose={() => setModal(null)} onDelete={onDeleteShift} onDownloadExcel={onDownloadExcel} />}</div>;
+  return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} newOrderCount={currentShiftOrders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(currentShiftOrders.length)} helper={`since ${clock(shiftStartedAt)}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={currentShiftOrders} paymentSettings={paymentSettings} onPayment={onPay} onReject={onReject} onAdvance={onAdvance} onCompleteDelivery={onCompleteDelivery} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} ownerPin={ownerPin} shifts={shifts} shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} onClose={() => setModal(null)} onDelete={onDeleteShift} />}</div>;
 }
 
 export default function App() {
@@ -1126,7 +1046,7 @@ export default function App() {
   else if (screen === "forgot-password") screenContent = <ForgotPasswordPage onBack={() => setScreen("student-login")} onSuccess={notify} />;
   else if (screen === "owner-pin") screenContent = <Login owner onBack={() => setScreen("landing")} onSuccess={(pin) => { setOwnerPin(pin || ""); setScreen("owner-dashboard"); }} />;
   else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} notification={studentNotification} onDismissNotification={() => setStudentNotification(null)} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
-  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onReject={rejectOrder} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} onDownloadExcel={() => downloadDailySalesReport(orders)} />;
+  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onReject={rejectOrder} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} />;
 
   return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
 }
