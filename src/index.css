@@ -153,6 +153,14 @@ input, select { outline: none; }
 .upi-app-icon { width: 25px; height: 25px; display: grid; place-items: center; flex: none; border-radius: 7px; background: #273044; color: #fff; font-size: 10px; font-weight: 900; }
 .upi-google-pay { background: #2b3a66; color: #8db8ff; }.upi-phonepe { background: #42306a; color: #d2aaff; }.upi-paytm { background: #194c67; color: #82d8ff; }.upi-other-apps { background: #3b333f; color: #e2d1e8; }
 .upi-app-help { margin: 9px 0 0; color: #7f7788; font-size: 8px; line-height: 1.45; }.upi-app-help b { color: #c7c0ce; font-weight: 800; }
+.upi-redirect-wait { padding: 30px 21px 24px; text-align: center; }
+.upi-redirect-spinner { width: 46px; height: 46px; margin: 0 auto 18px; border: 3px solid #2c2835; border-top-color: #af1117; border-radius: 50%; animation: upi-spin 0.9s linear infinite; }
+@keyframes upi-spin { to { transform: rotate(360deg); } }
+.upi-redirect-wait p { margin: 0; color: #cdc6d1; font-size: 12px; line-height: 1.6; }
+.upi-redirect-wait p b { color: #fff; }
+.upi-redirect-hint { margin-top: 10px !important; color: #8b8391 !important; font-size: 9px !important; }
+.upi-redirect-hint a { color: #ff9a9a; font-weight: 700; }
+.upi-redirect-wait .flow-back { display: block; margin: 20px auto 0; }
 .old-checkout-total { display: flex; justify-content: space-between; align-items: end; padding: 19px 0 13px; border-top: 1px solid #2c2835; margin-top: 18px; color: #938c9a; font-size: 12px; }.old-checkout-total b { color: #fff; font-size: 21px; }
 .profile-view { padding: 20px; }
 .profile-detail-card { padding: 20px 15px; margin-bottom: 12px; border: 1px solid #302c3b; border-radius: 17px; background: #1a1823; }

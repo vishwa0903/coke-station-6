@@ -390,25 +390,88 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">No items in this category.</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
+type CheckoutStep = "form" | "redirecting" | "payment-return";
 function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
   const [hostel, setHostel] = useState(initialHostel);
   const [payment, setPayment] = useState<PaymentMethod>("COD");
   const [upiApp, setUpiApp] = useState<UpiApp>("Google Pay");
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState("");
+  const [step, setStep] = useState<CheckoutStep>("form");
   const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   const apps: { name: UpiApp; icon: string }[] = [{ name: "Google Pay", icon: "G" }, { name: "PhonePe", icon: "पे" }, { name: "Paytm", icon: "P" }, { name: "Other apps", icon: "•••" }];
+  // Tracks whether the tab actually lost visibility after we redirected to
+  // the UPI app — our best available signal that the student left for the
+  // app rather than the redirect silently failing (e.g. no UPI app on this
+  // device). It is NOT a payment confirmation of any kind.
+  const leftForPaymentRef = useRef(false);
+  useEffect(() => {
+    if (step !== "redirecting") return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") { leftForPaymentRef.current = true; return; }
+      if (leftForPaymentRef.current) setStep("payment-return");
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    // Fallback for devices/browsers that don't support the UPI return flow
+    // at all (e.g. no UPI app installed, or a desktop browser): if the tab
+    // never lost visibility, the redirect didn't actually open anything.
+    const fallbackTimer = window.setTimeout(() => {
+      if (!leftForPaymentRef.current) { setError(`Couldn't open ${upiApp}. Make sure it's installed on this device, or choose a different UPI app or Cash on Delivery.`); setStep("form"); }
+    }, 2500);
+    return () => { document.removeEventListener("visibilitychange", handleVisibility); window.clearTimeout(fallbackTimer); };
+  }, [step, upiApp]);
+  useEffect(() => {
+    if (step !== "payment-return") return;
+    let cancelled = false;
+    const finish = async () => {
+      // IMPORTANT: reaching this step only means the student returned to
+      // this tab after being sent to their UPI app — it is NOT proof the
+      // payment actually succeeded (they may have cancelled or backed out).
+      // The order is created with paymentStatus "Pending" either way and
+      // still needs a real human to confirm it, exactly like the existing
+      // delivery-time "Confirm Payment Received" QR flow. If a trusted
+      // payment-status API is ever added, this is the single place to add
+      // a real server-verified check before calling onPlace.
+      setPlacing(true);
+      try {
+        await onPlace({ hostel, phone: profile.phone, payment: "UPI", upiApp });
+      } catch (caught) {
+        if (!cancelled) { setError(caught instanceof Error ? caught.message : "The order could not be placed. Please try again."); setStep("form"); }
+      } finally { if (!cancelled) setPlacing(false); }
+    };
+    void finish();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    setPlacing(true);
-    try {
-      await onPlace({ hostel, phone: profile.phone, payment, upiApp: payment === "UPI" ? upiApp : undefined });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The order could not be placed. Please try again.");
-    } finally { setPlacing(false); }
+    if (payment === "COD") {
+      setPlacing(true);
+      try { await onPlace({ hostel, phone: profile.phone, payment: "COD" }); }
+      catch (caught) { setError(caught instanceof Error ? caught.message : "The order could not be placed. Please try again."); }
+      finally { setPlacing(false); }
+      return;
+    }
+    // UPI: launch the chosen app with the exact order amount pre-filled via
+    // the standard upi://pay deep link — no gateway/provider involved, the
+    // student never has to type the amount themselves.
+    leftForPaymentRef.current = false;
+    setStep("redirecting");
+    window.location.href = buildUpiUri(upiId, total);
   };
-  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">Pay to <b>{upiId}</b> · You’ll be taken to {upiApp} after placing the order.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
+  if (step === "redirecting") {
+    const uri = buildUpiUri(upiId, total);
+    return <Modal title={`Opening ${upiApp}…`} subtitle="Complete the payment there, then come back to this tab." onClose={onClose}>
+      <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Pay <b>{money(total)}</b> to <b>{upiId}</b> in {upiApp}.</p><p className="upi-redirect-hint">Didn't open automatically? <a href={uri}>Tap here to open {upiApp}</a>.</p><button type="button" className="flow-back" onClick={() => setStep("form")}>← Back</button></div>
+    </Modal>;
+  }
+  if (step === "payment-return") {
+    return <Modal title="✅ Payment Successful" subtitle="Placing your order…" onClose={onClose}>
+      <div className="order-placed-content"><div className="order-placed-icon"><Icon name="check" size={30} /></div><span className="order-placed-kicker">WELCOME BACK</span><h3>Thanks for paying via {upiApp}</h3><p>We're placing your order now. The shop owner will confirm your payment when preparing or delivering it.</p></div>
+    </Modal>;
+  }
+  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">Pay to <b>{upiId}</b> · {upiApp} will open with <b>{money(total)}</b> already filled in.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : payment === "UPI" ? `Pay with ${upiApp}` : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
 }
 function OrderPlacedModal({ order, onClose }: { order: Order; onClose: () => void }) {
   return <Modal title="✅ Order placed" subtitle="Your order has been sent to the shop owner." onClose={onClose}>
@@ -512,7 +575,7 @@ function FakeQR() { const bits = [1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,
 // scanning it pre-fills the amount — no payment gateway/provider is involved,
 // this is just the plain UPI URI scheme every UPI app already understands.
 function buildUpiUri(upiId: string, amount: number) {
-  return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(SHOP_NAME)}&am=${amount}&cu=INR`;
+  return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(SHOP_NAME)}&am=${amount.toFixed(2)}&cu=INR`;
 }
 function UpiPaymentQr({ upiId, amount }: { upiId: string; amount: number }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
