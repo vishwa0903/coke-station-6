@@ -533,6 +533,75 @@ function computeSessionStats(session: { openedAt: string; closedAt: string | nul
   const pending = sessionOrders.filter((order) => order.paymentStatus === "Pending").length;
   return { orderCount: sessionOrders.length, online, cod, total: online + cod, pending };
 }
+type HistoryExportRow = { session: string; opened: string; closed: string; orders: number; online: number; cod: number; total: number; pending: number };
+type HistorySummary = { allOrders: number; onlineReceived: number; codReceived: number; grandTotal: number };
+// jsPDF's built-in fonts don't include the ₹ glyph (it renders as a blank
+// box), so the PDF export writes "Rs." instead. The on-screen UI and the
+// Excel export both keep using money()/₹ as before.
+function moneyForPdf(value: number) { return `Rs. ${value.toLocaleString("en-IN")}`; }
+async function downloadHistoryPdf(summary: HistorySummary, rows: HistoryExportRow[]) {
+  const [{ default: jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  const autoTable = autoTableModule.default;
+  const doc = new jsPDF({ orientation: "landscape" });
+  doc.setFontSize(16);
+  doc.text("Order History", 14, 16);
+  doc.setFontSize(9);
+  doc.setTextColor(130);
+  doc.text(`${SHOP_NAME} · Generated ${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date())}`, 14, 22);
+  doc.setTextColor(20);
+  doc.setFontSize(10);
+  doc.text(`All Orders: ${summary.allOrders}      Online Received: ${moneyForPdf(summary.onlineReceived)}      COD Received: ${moneyForPdf(summary.codReceived)}      Grand Total: ${moneyForPdf(summary.grandTotal)}`, 14, 30);
+  autoTable(doc, {
+    startY: 35,
+    head: [["Session", "Opened", "Closed", "Orders", "Online", "COD", "Total", "Pending"]],
+    body: rows.map((row) => [row.session, row.opened, row.closed, String(row.orders), moneyForPdf(row.online), moneyForPdf(row.cod), moneyForPdf(row.total), String(row.pending)]),
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [175, 17, 23] },
+    alternateRowStyles: { fillColor: [245, 245, 245] },
+  });
+  doc.save("Coke_Station_Order_History.pdf");
+}
+async function downloadHistoryExcel(summary: HistorySummary, rows: HistoryExportRow[]) {
+  const { default: writeXlsxFile } = await import("write-excel-file/browser");
+  const bold = { fontWeight: "bold" as const };
+  const money0 = "₹#,##0";
+  const data = [
+    [{ value: "Coke Station — Order History", fontSize: 14, ...bold }],
+    [{ value: `Generated: ${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date())}` }],
+    [],
+    [{ value: "All Orders", ...bold }, { value: "Online Received", ...bold }, { value: "COD Received", ...bold }, { value: "Grand Total", ...bold }],
+    [{ value: summary.allOrders, type: Number }, { value: summary.onlineReceived, type: Number, format: money0 }, { value: summary.codReceived, type: Number, format: money0 }, { value: summary.grandTotal, type: Number, format: money0 }],
+    [],
+    [{ value: "Session", ...bold }, { value: "Opened", ...bold }, { value: "Closed", ...bold }, { value: "Orders", ...bold }, { value: "Online", ...bold }, { value: "COD", ...bold }, { value: "Total", ...bold }, { value: "Pending", ...bold }],
+    ...rows.map((row) => [
+      { value: row.session },
+      { value: row.opened },
+      { value: row.closed },
+      { value: row.orders, type: Number },
+      { value: row.online, type: Number, format: money0 },
+      { value: row.cod, type: Number, format: money0 },
+      { value: row.total, type: Number, format: money0 },
+      { value: row.pending, type: Number },
+    ]),
+  ];
+  await (await writeXlsxFile(data, { sheet: "Order History" })).toFile("Coke_Station_Order_History.xlsx");
+}
+function HistoryDownloadButtons({ summary, rows }: { summary: HistorySummary; rows: HistoryExportRow[] }) {
+  const [busy, setBusy] = useState<"pdf" | "xlsx" | null>(null);
+  const runExport = async (kind: "pdf" | "xlsx") => {
+    if (busy) return;
+    setBusy(kind);
+    try {
+      if (kind === "pdf") await downloadHistoryPdf(summary, rows);
+      else await downloadHistoryExcel(summary, rows);
+    } catch {
+      window.alert(`Could not generate the ${kind === "pdf" ? "PDF" : "Excel"} file. Please try again.`);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return <div className="history-download-group"><button type="button" className="history-download-button pdf" disabled={busy !== null} onClick={() => runExport("pdf")} title="Download PDF" aria-label="Download PDF">{busy === "pdf" ? "…" : "DP"}</button><button type="button" className="history-download-button xlsx" disabled={busy !== null} onClick={() => runExport("xlsx")} title="Download Excel" aria-label="Download Excel">{busy === "xlsx" ? "…" : "DX"}</button></div>;
+}
 function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt, onClose, onDelete }: { orders: Order[]; ownerPin: string; shifts: Shift[]; shopOpen: boolean; shiftStartedAt: string; onClose: () => void; onDelete: (id: string) => void }) {
   // Session open/close boundaries are the shared source of truth in Supabase
   // (owner_list_coke_shop_sessions) — every order count below is computed
@@ -582,7 +651,19 @@ function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt,
   const cod = usingSyncedSessions
     ? (liveStats ? liveStats.cod : 0) + completedSessionStats.reduce((sum, entry) => sum + entry.stats.cod, 0)
     : legacyLiveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0) + legacyCompletedShifts.reduce((sum, shift) => sum + shift.cod, 0);
-  return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div>{loadError && <p className="history-load-error">{loadError}</p>}<div className="history-session-list">{sessions === null && <p className="history-loading">Loading synced session history…</p>}{usingSyncedSessions ? <>{shopOpen && currentSession && liveStats && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(currentSession.openedAt)} · {clock(currentSession.openedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveStats.orderCount} {liveStats.orderCount === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveStats.online)}</b><small>confirmed</small></span><span>COD <b>{money(liveStats.cod)}</b><small>confirmed</small></span><span>TOTAL <b>{money(liveStats.total)}</b><small>{liveStats.pending} pending</small></span></div></div>}{completedSessionStats.map(({ session, stats }) => <div className="history-session" key={session.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(session.openedAt)}</small><small>Closed: {dateTime(session.closedAt || session.openedAt)}</small></div><div className="session-actions"><strong>{stats.orderCount} {stats.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(session.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(stats.online)}</b><small>{stats.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(stats.cod)}</b><small>{stats.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(stats.total)}</b><small>{stats.pending} pending</small></span></div></div>)}</> : <>{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{legacyLiveOrders.length} orders</strong></div></div>}{legacyCompletedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</>}</div></Modal>;
+  // Mirrors exactly what's rendered below, in the same order, so the PDF/Excel
+  // downloads can never contain anything not currently shown in History.
+  const historyRows: HistoryExportRow[] = usingSyncedSessions
+    ? [
+        ...(shopOpen && currentSession && liveStats ? [{ session: "Current Open Session", opened: `${shortDate(currentSession.openedAt)} · ${clock(currentSession.openedAt)}`, closed: "Running (shop still open)", orders: liveStats.orderCount, online: liveStats.online, cod: liveStats.cod, total: liveStats.total, pending: liveStats.pending }] : []),
+        ...completedSessionStats.map(({ session, stats }) => ({ session: "Completed Shop Session", opened: dateTime(session.openedAt), closed: dateTime(session.closedAt || session.openedAt), orders: stats.orderCount, online: stats.online, cod: stats.cod, total: stats.total, pending: stats.pending })),
+      ]
+    : [
+        ...(shopOpen ? [{ session: "Current Open Session", opened: `${shortDate(shiftStartedAt)} · ${clock(shiftStartedAt)}`, closed: "Running (shop still open)", orders: legacyLiveOrders.length, online: legacyLiveOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0), cod: legacyLiveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0), pending: legacyLiveOrders.filter((order) => order.paymentStatus === "Pending").length, total: 0 }] : []),
+        ...legacyCompletedShifts.map((shift) => ({ session: "Completed Shop Session", opened: dateTime(shift.openedAt), closed: dateTime(shift.closedAt || shift.openedAt), orders: shift.orderCount, online: shift.online, cod: shift.cod, total: shift.total, pending: shift.pending })),
+      ].map((row) => ({ ...row, total: row.total || row.online + row.cod }));
+  const historySummary: HistorySummary = { allOrders: all, onlineReceived: online, codReceived: cod, grandTotal: online + cod };
+  return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span><HistoryDownloadButtons summary={historySummary} rows={historyRows} /></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div>{loadError && <p className="history-load-error">{loadError}</p>}<div className="history-session-list">{sessions === null && <p className="history-loading">Loading synced session history…</p>}{usingSyncedSessions ? <>{shopOpen && currentSession && liveStats && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(currentSession.openedAt)} · {clock(currentSession.openedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveStats.orderCount} {liveStats.orderCount === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveStats.online)}</b><small>confirmed</small></span><span>COD <b>{money(liveStats.cod)}</b><small>confirmed</small></span><span>TOTAL <b>{money(liveStats.total)}</b><small>{liveStats.pending} pending</small></span></div></div>}{completedSessionStats.map(({ session, stats }) => <div className="history-session" key={session.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(session.openedAt)}</small><small>Closed: {dateTime(session.closedAt || session.openedAt)}</small></div><div className="session-actions"><strong>{stats.orderCount} {stats.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(session.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(stats.online)}</b><small>{stats.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(stats.cod)}</b><small>{stats.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(stats.total)}</b><small>{stats.pending} pending</small></span></div></div>)}</> : <>{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{legacyLiveOrders.length} orders</strong></div></div>}{legacyCompletedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</>}</div></Modal>;
 }
 function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onPaymentSave, onAdvance, onPay, onReject, onCompleteDelivery, onCall, onNavigate, onDeleteShift }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onReject: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void }) {
   const [actionMenu, setActionMenu] = useState(false);

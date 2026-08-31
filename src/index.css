@@ -410,6 +410,13 @@ input, select { outline: none; }
 .delivered-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 8px; padding: 0 10px; border: 1px solid #3d354c; border-radius: 8px; background: #211e2b; color: #a69bab; font-size: 9px; font-weight: 900; }.rejected-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; margin-top: 8px; padding: 0 10px; border: 1px solid #6b303b; border-radius: 8px; background: #351d24; color: #f17a7d; font-size: 9px; font-weight: 900; }
 
 .history-modal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 17px 0; color: #817989; font-size: 9px; }
+.history-download-group { display: flex; gap: 7px; flex: none; }
+.history-download-button { width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 10px; font-weight: 900; letter-spacing: 0.2px; cursor: pointer; transition: transform 0.15s ease, background 0.15s ease; }
+.history-download-button.pdf { border: 1px solid #8b3030; background: #2c1616; color: #ff9a9a; }
+.history-download-button.pdf:hover:not(:disabled) { background: #481f1f; color: #ffb8b8; transform: translateY(-1px); }
+.history-download-button.xlsx { border: 1px solid #2a8b56; background: #142c21; color: #53e27f; }
+.history-download-button.xlsx:hover:not(:disabled) { background: #1b4830; color: #83f5a4; transform: translateY(-1px); }
+.history-download-button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 @media (max-width: 620px) {
   .history-modal-toolbar { align-items: flex-start; flex-direction: column; padding: 12px 11px 0; }
 }
