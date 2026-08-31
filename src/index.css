@@ -160,7 +160,8 @@ input, select { outline: none; }
 .upi-redirect-wait p b { color: #fff; }
 .upi-redirect-hint { margin-top: 10px !important; color: #8b8391 !important; font-size: 9px !important; }
 .upi-redirect-hint a { color: #ff9a9a; font-weight: 700; }
-.upi-redirect-wait .flow-back { display: block; margin: 20px auto 0; }
+.upi-manual-continue { margin-top: 22px; }
+.upi-redirect-wait .flow-back { display: block; margin: 12px auto 0; }
 .old-checkout-total { display: flex; justify-content: space-between; align-items: end; padding: 19px 0 13px; border-top: 1px solid #2c2835; margin-top: 18px; color: #938c9a; font-size: 12px; }.old-checkout-total b { color: #fff; font-size: 21px; }
 .profile-view { padding: 20px; }
 .profile-detail-card { padding: 20px 15px; margin-bottom: 12px; border: 1px solid #302c3b; border-radius: 17px; background: #1a1823; }
