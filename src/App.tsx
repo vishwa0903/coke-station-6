@@ -390,7 +390,7 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">No items in this category.</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
-type CheckoutStep = "form" | "redirecting" | "payment-return";
+type CheckoutStep = "form" | "redirecting" | "confirm" | "payment-return";
 function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
   const [hostel, setHostel] = useState(initialHostel);
   const [payment, setPayment] = useState<PaymentMethod>("COD");
@@ -400,19 +400,19 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
   const [step, setStep] = useState<CheckoutStep>("form");
   const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   const apps: { name: UpiApp; icon: string }[] = [{ name: "Google Pay", icon: "G" }, { name: "PhonePe", icon: "पे" }, { name: "Paytm", icon: "P" }, { name: "Other apps", icon: "•••" }];
-  // Auto-advances to the Payment Successful step when the browser reliably
-  // reports the tab losing and regaining visibility around the redirect —
-  // this works well in a normal mobile browser tab. It's a nicety, not the
-  // only way forward: the manual "I've completed the payment" button below
-  // always works too, since some embedded browsers (e.g. WhatsApp's in-app
-  // browser) don't fire visibilitychange reliably when handing off to an
-  // external app, even though the app opens successfully.
+  // Auto-advances to the confirm step when the browser reliably reports the
+  // tab losing and regaining visibility around the redirect — this works
+  // well in a normal mobile browser tab. It's a nicety, not the only way
+  // forward: the manual "I'm back" button below always works too, since
+  // some embedded browsers (e.g. WhatsApp's in-app browser) don't fire
+  // visibilitychange reliably when handing off to an external app, even
+  // though the app opens successfully.
   const leftForPaymentRef = useRef(false);
   useEffect(() => {
     if (step !== "redirecting") return;
     const handleVisibility = () => {
       if (document.visibilityState === "hidden") { leftForPaymentRef.current = true; return; }
-      if (leftForPaymentRef.current) setStep("payment-return");
+      if (leftForPaymentRef.current) setStep("confirm");
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
@@ -421,12 +421,12 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
     if (step !== "payment-return") return;
     let cancelled = false;
     const finish = async () => {
-      // IMPORTANT: reaching this step only means the student returned to
-      // this tab after being sent to their UPI app, or manually said they'd
-      // paid — it is NOT proof the payment actually succeeded (they may
-      // have cancelled or backed out). The order is created with
-      // paymentStatus "Pending" either way and still needs a real human to
-      // confirm it, exactly like the existing delivery-time "Confirm
+      // IMPORTANT: reaching this step means the student explicitly told us
+      // ("Yes, I paid") they completed the payment in their UPI app — it is
+      // still NOT proof the payment actually succeeded, since there is no
+      // payment gateway/provider here to verify it against. The order is
+      // created with paymentStatus "Pending" and still needs a real human
+      // to confirm it, exactly like the existing delivery-time "Confirm
       // Payment Received" QR flow. If a trusted payment-status API is ever
       // added, this is the single place to add a real server-verified
       // check before calling onPlace.
@@ -461,7 +461,25 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
   if (step === "redirecting") {
     const uri = buildUpiUri(upiId, total);
     return <Modal title={`Opening ${upiApp}…`} subtitle="Complete the payment there, then come back to this tab." onClose={onClose}>
-      <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Pay <b>{money(total)}</b> to <b>{upiId}</b> in {upiApp}.</p><p className="upi-redirect-hint">Didn't open automatically? <a href={uri}>Tap here to open {upiApp}</a>.</p><PrimaryButton type="button" className="full-width upi-manual-continue" onClick={() => setStep("payment-return")}>I've completed the payment <Icon name="check" size={16} /></PrimaryButton><button type="button" className="flow-back" onClick={() => setStep("form")}>← Choose a different payment method</button></div>
+      <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Pay <b>{money(total)}</b> to <b>{upiId}</b> in {upiApp}.</p><p className="upi-redirect-hint">Didn't open automatically? <a href={uri}>Tap here to open {upiApp}</a>.</p><PrimaryButton type="button" className="full-width upi-manual-continue" onClick={() => setStep("confirm")}>I'm back — continue <Icon name="arrow" size={16} /></PrimaryButton><button type="button" className="flow-back" onClick={() => setStep("form")}>← Choose a different payment method</button></div>
+    </Modal>;
+  }
+  if (step === "confirm") {
+    // We genuinely cannot tell, from this web app, whether the student
+    // completed or cancelled the payment in their UPI app — there's no
+    // payment gateway/provider here to check against (see the DISMISS
+    // button case: GPay can be closed without paying, and returning to
+    // this tab looks identical either way). So we ask directly, and a
+    // cancelled payment never creates an order at all.
+    return <Modal title="Did the payment go through?" subtitle={`You were sent to ${upiApp} to pay ${money(total)}.`} onClose={onClose}>
+      <div className="upi-confirm-content">
+        <p>Only place this order if the payment in {upiApp} actually completed. If you backed out or cancelled, choose "No" — no order will be created and nothing will be charged.</p>
+        {error && <p className="checkout-error">{error}</p>}
+        <div className="upi-confirm-actions">
+          <button type="button" className="upi-confirm-no" disabled={placing} onClick={() => { setStep("form"); setPayment("COD"); }}>✕ No, I cancelled</button>
+          <PrimaryButton type="button" className="upi-confirm-yes" disabled={placing} onClick={() => setStep("payment-return")}>{placing ? "Placing order…" : "✓ Yes, I paid"}</PrimaryButton>
+        </div>
+      </div>
     </Modal>;
   }
   if (step === "payment-return") {

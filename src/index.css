@@ -162,6 +162,13 @@ input, select { outline: none; }
 .upi-redirect-hint a { color: #ff9a9a; font-weight: 700; }
 .upi-manual-continue { margin-top: 22px; }
 .upi-redirect-wait .flow-back { display: block; margin: 12px auto 0; }
+.upi-confirm-content { padding: 22px 21px 24px; }
+.upi-confirm-content > p { margin: 0; color: #cdc6d1; font-size: 11px; line-height: 1.6; }
+.upi-confirm-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 9px; margin-top: 20px; }
+.upi-confirm-no { min-height: 42px; border: 1px solid #4a2c2c; border-radius: 9px; background: #241515; color: #ff9a9a; font-size: 10px; font-weight: 800; }
+.upi-confirm-no:hover:not(:disabled) { background: #331d1d; }
+.upi-confirm-no:disabled { opacity: 0.5; }
+.upi-confirm-yes { min-height: 42px; }
 .old-checkout-total { display: flex; justify-content: space-between; align-items: end; padding: 19px 0 13px; border-top: 1px solid #2c2835; margin-top: 18px; color: #938c9a; font-size: 12px; }.old-checkout-total b { color: #fff; font-size: 21px; }
 .profile-view { padding: 20px; }
 .profile-detail-card { padding: 20px 15px; margin-bottom: 12px; border: 1px solid #302c3b; border-radius: 17px; background: #1a1823; }
