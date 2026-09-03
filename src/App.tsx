@@ -1109,13 +1109,16 @@ export default function App() {
   };
   const addToCart = (item: MenuItem) => { if (!item.available) return notify(`${item.name} is out of stock`); setCart((current) => { const found = current.find((row) => row.item.id === item.id); return found ? current.map((row) => row.item.id === item.id ? { ...row, quantity: row.quantity + 1 } : row) : [...current, { item, quantity: 1 }]; }); };
   const toggleMenuItem = async (id: string) => {
+    const previous = menu;
     const item = menu.find((entry) => entry.id === id);
     if (!item) return;
     const nextAvailable = !item.available;
     setMenu((current) => current.map((entry) => entry.id === id ? { ...entry, available: nextAvailable } : entry));
     if (!supabase || !ownerPin) return;
     const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: nextAvailable, p_pin: ownerPin, p_description: item.description || null, p_image_url: item.imageUrl || null });
-    if (error || data === false) notify(error?.message || "Menu availability was not saved");
+    const menuBackendMissing = error && ["42883", "PGRST202", "42P01", "42703"].includes(error.code || "");
+    if (menuBackendMissing) { notify("Changed on this device — run MENU_IMAGES_AND_DELETE.sql to sync availability"); return; }
+    if (error || data === false) { setMenu(previous); notify(error?.message || "Menu availability was not saved"); }
   };
   const addMenuItem = async (item: MenuItem) => {
     const previous = menu;
