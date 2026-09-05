@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 
 const SHOP_NAME = "Coke Station";
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
-type Category = "All" | "Maggie" | "Eggs" | "Sandwiches" | "Hot Drinks" | "Cold Drinks" | "Snacks";
+type Category = "All" | "Chips" | "Cup Noodles" | "Biscuits" | "Cakes" | "Ice Cream" | "Chocolates" | "Drinks";
 type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; size: string; price: number; emoji: string; available: boolean; description?: string; imageUrl?: string };
 type PaymentMethod = "UPI" | "COD";
 type UpiApp = "Google Pay" | "PhonePe" | "Paytm" | "Other apps";
@@ -111,31 +111,13 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 }
 
 const categories: { name: Category; emoji: string }[] = [
-  { name: "All", emoji: "🌙" }, { name: "Maggie", emoji: "🍜" }, { name: "Eggs", emoji: "🍳" }, { name: "Sandwiches", emoji: "🥪" }, { name: "Hot Drinks", emoji: "☕" }, { name: "Cold Drinks", emoji: "🥤" }, { name: "Snacks", emoji: "🍟" },
+  { name: "All", emoji: "🌙" }, { name: "Chips", emoji: "🥔" }, { name: "Cup Noodles", emoji: "🍜" }, { name: "Biscuits", emoji: "🍪" }, { name: "Cakes", emoji: "🍰" }, { name: "Ice Cream", emoji: "🍦" }, { name: "Chocolates", emoji: "🍫" }, { name: "Drinks", emoji: "🥤" },
 ];
-const defaultMenu: MenuItem[] = [
-  { id: "maggie", name: "Maggie", category: "Maggie", size: "Regular", price: 35, emoji: "🍜", available: true },
-  { id: "cheese-maggie", name: "Cheese Maggie", category: "Maggie", size: "Regular", price: 40, emoji: "🧀", available: false },
-  { id: "chicken-maggie", name: "Chicken Maggie", category: "Maggie", size: "Regular", price: 45, emoji: "🍜", available: true },
-  { id: "cheese-chicken", name: "Cheese Chicken Maggie", category: "Maggie", size: "Regular", price: 50, emoji: "🍜", available: true },
-  { id: "bread-omelette", name: "Bread Omelette", category: "Eggs", size: "Regular", price: 35, emoji: "🍳", available: true },
-  { id: "double-omelette", name: "Double Omelette", category: "Eggs", size: "Regular", price: 25, emoji: "🥚", available: true },
-  { id: "tea", name: "Tea", category: "Hot Drinks", size: "Cup", price: 10, emoji: "🍵", available: true },
-  { id: "coffee", name: "Coffee", category: "Hot Drinks", size: "Cup", price: 10, emoji: "☕", available: true },
-  { id: "sprite", name: "Sprite", category: "Cold Drinks", size: "750 ml", price: 40, emoji: "🥤", available: true },
-  { id: "veg-sandwich", name: "Veg Sandwich", category: "Sandwiches", size: "Regular", price: 45, emoji: "🥪", available: true },
-  { id: "chips", name: "Peri Peri Chips", category: "Snacks", size: "Pack", price: 30, emoji: "🍟", available: true },
-  { id: "cheese-sandwich", name: "Cheese Sandwich", category: "Sandwiches", size: "Regular", price: 45, emoji: "🥪", available: true },
-  { id: "chicken-sandwich", name: "Chicken Sandwich", category: "Sandwiches", size: "Regular", price: 60, emoji: "🥪", available: true },
-  { id: "veg-roll", name: "Veg Roll", category: "Sandwiches", size: "Regular", price: 35, emoji: "🌯", available: true },
-  { id: "chicken-roll", name: "Chicken Roll", category: "Sandwiches", size: "Regular", price: 55, emoji: "🌯", available: true },
-  { id: "black-tea", name: "Black Tea", category: "Hot Drinks", size: "Cup", price: 15, emoji: "🍵", available: true },
-  { id: "lemon-tea", name: "Lemon Tea", category: "Hot Drinks", size: "Cup", price: 15, emoji: "🍋", available: true },
-  { id: "cold-coffee", name: "Cold Coffee", category: "Cold Drinks", size: "Glass", price: 45, emoji: "🥤", available: true },
-  { id: "water", name: "Water Bottle", category: "Cold Drinks", size: "1 L", price: 20, emoji: "💧", available: true },
-  { id: "cookies", name: "Chocolate Cookies", category: "Snacks", size: "Pack", price: 25, emoji: "🍪", available: true },
-  { id: "brownie", name: "Chocolate Brownie", category: "Snacks", size: "Piece", price: 40, emoji: "🍫", available: true },
-];
+// Starting fresh with the new category set — no pre-seeded items. The real
+// menu is loaded from Supabase; this only matters as the initial state
+// before that load completes, or as an offline fallback if Supabase isn't
+// configured at all.
+const defaultMenu: MenuItem[] = [];
 // Only the empty current shift is seeded. Orders and completed history are loaded from the backend/local session state.
 const defaultShifts: Shift[] = [
   { id: "shift-current", openedAt: new Date().toISOString(), orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 },
@@ -189,12 +171,12 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
 
 
 function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
-  const categories: Exclude<Category, "All">[] = ["Maggie", "Eggs", "Sandwiches", "Hot Drinks", "Cold Drinks", "Snacks"];
-  const category = String(row.category ?? "Snacks");
+  const categories: Exclude<Category, "All">[] = ["Chips", "Cup Noodles", "Biscuits", "Cakes", "Ice Cream", "Chocolates", "Drinks"];
+  const category = String(row.category ?? "Chips");
   return {
     id: String(row.id ?? `menu-${Date.now()}`),
     name: String(row.name ?? "Menu item"),
-    category: categories.includes(category as Exclude<Category, "All">) ? category as Exclude<Category, "All"> : "Snacks",
+    category: categories.includes(category as Exclude<Category, "All">) ? category as Exclude<Category, "All"> : "Chips",
     size: String(row.size ?? "Regular"),
     price: Number(row.price ?? 0),
     emoji: String(row.emoji ?? "🍽️"),
@@ -394,7 +376,7 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   const cartCount = cart.reduce((sum, row) => sum + row.quantity, 0);
   const cartTotal = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   if (!shopOpen) return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><div className="closed-student"><div className="closed-cup">🥤</div><span className="live-label">● SERVICE PAUSED</span><h1>Shop is closed</h1><p>We usually deliver from 7:00 PM to 2:00 AM.<br />Please come back during the night shift.</p><button className="dark-outline-button" onClick={onHistory}>View order history</button></div>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}</div>;
-  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Maggie, sandwiches, chai, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><div className="student-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="student-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">{query ? "No food items found" : "No items in this category."}</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
+  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Chips, cup noodles, chocolates, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><div className="student-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="student-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">{query ? "No food items found" : "No items in this category."}</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
 type CheckoutStep = "form" | "redirecting" | "confirm" | "payment-return";
@@ -563,11 +545,11 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onReject, onAdvance, 
 }
 function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: MenuItem[]; onClose: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDelete: (id: string) => void }) {
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "", category: "Snacks" as Exclude<Category, "All">, size: "Regular", price: "", imageUrl: "" });
+  const [form, setForm] = useState({ name: "", description: "", category: "Chips" as Exclude<Category, "All">, size: "Regular", price: "", imageUrl: "" });
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MenuItem | null>(null);
   const available = menu.filter((item) => item.available).length;
-  const resetForm = () => { setForm({ name: "", description: "", category: "Snacks", size: "Regular", price: "", imageUrl: "" }); setImageUrlInput(""); };
+  const resetForm = () => { setForm({ name: "", description: "", category: "Chips", size: "Regular", price: "", imageUrl: "" }); setImageUrlInput(""); };
   // Opens a Google Images search for the typed product name in a new tab.
   // Browsers don't allow a webpage to automatically read back an image the
   // owner picks on another site, so the owner finds the image there, saves
@@ -591,7 +573,7 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
       <div className="new-food-grid">
         <label><span>ITEM NAME</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Chicken Roll" required /></label>
         <label><span>DESCRIPTION (OPTIONAL)</span><input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Grilled chicken, mayo, veggies" /></label>
-        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value as Exclude<Category, "All"> })}><option>Maggie</option><option>Eggs</option><option>Sandwiches</option><option>Hot Drinks</option><option>Cold Drinks</option><option>Snacks</option></select></label>
+        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value as Exclude<Category, "All"> })}><option>Chips</option><option>Cup Noodles</option><option>Biscuits</option><option>Cakes</option><option>Ice Cream</option><option>Chocolates</option><option>Drinks</option></select></label>
         <label><span>SIZE / SERVING</span><input value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} /></label>
         <label><span>PRICE (₹)</span><input type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} placeholder="50" required /></label>
       </div>
