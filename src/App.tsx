@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 
 const SHOP_NAME = "Coke Station";
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
-type Category = "All" | "Chips" | "Cup Noodles" | "Biscuits" | "Cakes" | "Ice Cream" | "Chocolates" | "Drinks";
+type Category = "All" | "Chips" | "Cup Noodles" | "Biscuits" | "Cakes" | "Ice Cream" | "Chocolates" | "Drinks" | "Hot" | "Cold" | "Maggie" | "Sandwich" | "Omelette" | "Burger";
 type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; brand?: string; size: string; price: number; emoji: string; available: boolean; description?: string; imageUrl?: string };
 type PaymentMethod = "UPI" | "COD";
 type UpiApp = "Google Pay" | "PhonePe" | "Paytm" | "Other apps";
@@ -111,10 +111,11 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 }
 
 const categories: { name: Category; emoji: string }[] = [
-  { name: "All", emoji: "🌙" }, { name: "Chips", emoji: "🥔" }, { name: "Cup Noodles", emoji: "🍜" }, { name: "Biscuits", emoji: "🍪" }, { name: "Cakes", emoji: "🍰" }, { name: "Ice Cream", emoji: "🍦" }, { name: "Chocolates", emoji: "🍫" }, { name: "Drinks", emoji: "🥤" },
+  { name: "All", emoji: "🌙" }, { name: "Chips", emoji: "🥔" }, { name: "Cup Noodles", emoji: "🍜" }, { name: "Biscuits", emoji: "🍪" }, { name: "Cakes", emoji: "🍰" }, { name: "Ice Cream", emoji: "🍦" }, { name: "Chocolates", emoji: "🍫" }, { name: "Drinks", emoji: "🥤" }, { name: "Hot", emoji: "☕" }, { name: "Cold", emoji: "🧊" }, { name: "Maggie", emoji: "🍲" }, { name: "Sandwich", emoji: "🥪" }, { name: "Omelette", emoji: "🍳" }, { name: "Burger", emoji: "🍔" },
 ];
-// Only these 4 categories have a brand layer — Cup Noodles/Biscuits/Cakes
-// show products directly under the category with no brand step.
+// Only these 4 categories have a brand layer — every other category
+// (including the 6 added later) shows products directly under the
+// category with no brand step.
 const CATEGORY_BRANDS: Record<Exclude<Category, "All">, string[]> = {
   Chips: ["Max Protein", "Bingo", "Lays"],
   "Cup Noodles": [],
@@ -123,6 +124,12 @@ const CATEGORY_BRANDS: Record<Exclude<Category, "All">, string[]> = {
   "Ice Cream": ["Dairy Day", "Mercely's"],
   Chocolates: ["Rite Bite Chocolates", "Nestlé"],
   Drinks: ["Cavin's", "Minute Maid", "O'cean", "Soft Drinks"],
+  Hot: [],
+  Cold: [],
+  Maggie: [],
+  Sandwich: [],
+  Omelette: [],
+  Burger: [],
 };
 // Matches the Google Images search terms requested for each category, e.g.
 // "Bingo chips product", "KitKat chocolate product", "Coca Cola product".
@@ -134,6 +141,12 @@ const CATEGORY_IMAGE_HINT: Record<Exclude<Category, "All">, string> = {
   "Ice Cream": "ice cream",
   Chocolates: "chocolate",
   Drinks: "",
+  Hot: "",
+  Cold: "",
+  Maggie: "maggie noodles",
+  Sandwich: "sandwich",
+  Omelette: "omelette",
+  Burger: "burger",
 };
 // Starting fresh with the new category set — no pre-seeded items. The real
 // menu is loaded from Supabase; this only matters as the initial state
@@ -193,7 +206,7 @@ function orderFromDatabase(row: Record<string, unknown>): Order {
 
 
 function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
-  const categories: Exclude<Category, "All">[] = ["Chips", "Cup Noodles", "Biscuits", "Cakes", "Ice Cream", "Chocolates", "Drinks"];
+  const categories: Exclude<Category, "All">[] = ["Chips", "Cup Noodles", "Biscuits", "Cakes", "Ice Cream", "Chocolates", "Drinks", "Hot", "Cold", "Maggie", "Sandwich", "Omelette", "Burger"];
   const category = String(row.category ?? "Chips");
   return {
     id: String(row.id ?? `menu-${Date.now()}`),
@@ -604,7 +617,7 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
       <div className="new-food-grid">
         <label><span>ITEM NAME</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Chicken Roll" required /></label>
         <label><span>DESCRIPTION (OPTIONAL)</span><input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Grilled chicken, mayo, veggies" /></label>
-        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setCategory(event.target.value as Exclude<Category, "All">)}><option>Chips</option><option>Cup Noodles</option><option>Biscuits</option><option>Cakes</option><option>Ice Cream</option><option>Chocolates</option><option>Drinks</option></select></label>
+        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setCategory(event.target.value as Exclude<Category, "All">)}><option>Chips</option><option>Cup Noodles</option><option>Biscuits</option><option>Cakes</option><option>Ice Cream</option><option>Chocolates</option><option>Drinks</option><option>Hot</option><option>Cold</option><option>Maggie</option><option>Sandwich</option><option>Omelette</option><option>Burger</option></select></label>
         {CATEGORY_BRANDS[form.category].length > 0 && <label><span>BRAND</span><select value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })}>{CATEGORY_BRANDS[form.category].map((brand) => <option key={brand}>{brand}</option>)}</select></label>}
         <label><span>SIZE / SERVING</span><input value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} /></label>
         <label><span>PRICE (₹)</span><input type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} placeholder="50" required /></label>
