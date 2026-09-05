@@ -7,7 +7,7 @@ import QRCode from "qrcode";
 const SHOP_NAME = "Coke Station";
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
 type Category = "All" | "Chips" | "Cup Noodles" | "Biscuits" | "Cakes" | "Ice Cream" | "Chocolates" | "Drinks";
-type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; size: string; price: number; emoji: string; available: boolean; description?: string; imageUrl?: string };
+type MenuItem = { id: string; name: string; category: Exclude<Category, "All">; brand?: string; size: string; price: number; emoji: string; available: boolean; description?: string; imageUrl?: string };
 type PaymentMethod = "UPI" | "COD";
 type UpiApp = "Google Pay" | "PhonePe" | "Paytm" | "Other apps";
 type PaymentSettings = { upiId: string; qrCode: string | null };
@@ -113,6 +113,28 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 const categories: { name: Category; emoji: string }[] = [
   { name: "All", emoji: "🌙" }, { name: "Chips", emoji: "🥔" }, { name: "Cup Noodles", emoji: "🍜" }, { name: "Biscuits", emoji: "🍪" }, { name: "Cakes", emoji: "🍰" }, { name: "Ice Cream", emoji: "🍦" }, { name: "Chocolates", emoji: "🍫" }, { name: "Drinks", emoji: "🥤" },
 ];
+// Only these 4 categories have a brand layer — Cup Noodles/Biscuits/Cakes
+// show products directly under the category with no brand step.
+const CATEGORY_BRANDS: Record<Exclude<Category, "All">, string[]> = {
+  Chips: ["Max Protein", "Bingo", "Lays"],
+  "Cup Noodles": [],
+  Biscuits: [],
+  Cakes: [],
+  "Ice Cream": ["Dairy Day", "Mercely's"],
+  Chocolates: ["Rite Bite Chocolates", "Nestlé"],
+  Drinks: ["Cavin's", "Minute Maid", "O'cean", "Soft Drinks"],
+};
+// Matches the Google Images search terms requested for each category, e.g.
+// "Bingo chips product", "KitKat chocolate product", "Coca Cola product".
+const CATEGORY_IMAGE_HINT: Record<Exclude<Category, "All">, string> = {
+  Chips: "chips",
+  "Cup Noodles": "cup noodles",
+  Biscuits: "biscuits",
+  Cakes: "cake",
+  "Ice Cream": "ice cream",
+  Chocolates: "chocolate",
+  Drinks: "",
+};
 // Starting fresh with the new category set — no pre-seeded items. The real
 // menu is loaded from Supabase; this only matters as the initial state
 // before that load completes, or as an offline fallback if Supabase isn't
@@ -183,6 +205,7 @@ function menuItemFromDatabase(row: Record<string, unknown>): MenuItem {
     available: row.available !== false,
     description: typeof row.description === "string" && row.description ? row.description : undefined,
     imageUrl: typeof row.image_url === "string" && row.image_url ? row.image_url : undefined,
+    brand: typeof row.brand === "string" && row.brand ? row.brand : undefined,
   };
 }
 
@@ -373,10 +396,16 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   const [passwordOpen, setPasswordOpen] = useState(false);
   const query = search.trim().toLowerCase();
   const shown = menu.filter((item) => (category === "All" || item.category === category) && (!query || item.name.toLowerCase().includes(query)));
+  // Group by brand only when a specific branded category is selected and
+  // the student isn't searching — "All" and brandless categories (Cup
+  // Noodles/Biscuits/Cakes) stay a flat list, matching the existing layout.
+  const activeBrands = category !== "All" ? CATEGORY_BRANDS[category] : [];
+  const groupByBrand = activeBrands.length > 0 && !query;
+  const brandGroups = groupByBrand ? [...activeBrands, ""].map((brand) => ({ brand, items: shown.filter((item) => (item.brand || "") === brand) })).filter((group) => group.items.length > 0) : [];
   const cartCount = cart.reduce((sum, row) => sum + row.quantity, 0);
   const cartTotal = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   if (!shopOpen) return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><div className="closed-student"><div className="closed-cup">🥤</div><span className="live-label">● SERVICE PAUSED</span><h1>Shop is closed</h1><p>We usually deliver from 7:00 PM to 2:00 AM.<br />Please come back during the night shift.</p><button className="dark-outline-button" onClick={onHistory}>View order history</button></div>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}</div>;
-  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Chips, cup noodles, chocolates, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><div className="student-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="student-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div><main className="student-menu-area"><div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>{!shown.length && <div className="center-empty">{query ? "No food items found" : "No items in this category."}</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
+  return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Chips, cup noodles, chocolates, cold drinks — straight to your hostel.</p></section><div className="category-bar">{categories.map((item) => <button className={category === item.name ? "active" : ""} key={item.name} onClick={() => setCategory(item.name)}><span>{item.emoji}</span>{item.name}</button>)}</div><div className="student-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="student-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div><main className="student-menu-area">{groupByBrand ? brandGroups.map((group) => <div className="brand-group" key={group.brand || "other"}><h3 className="brand-group-title">{group.brand || "Other"}</h3><div className="student-products">{group.items.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div></div>) : <div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>}{!shown.length && <div className="center-empty">{query ? "No food items found" : "No items in this category."}</div>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
 type CheckoutStep = "form" | "redirecting" | "confirm" | "payment-return";
@@ -545,18 +574,20 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onReject, onAdvance, 
 }
 function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: MenuItem[]; onClose: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDelete: (id: string) => void }) {
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: "", description: "", category: "Chips" as Exclude<Category, "All">, size: "Regular", price: "", imageUrl: "" });
+  const [form, setForm] = useState({ name: "", description: "", category: "Chips" as Exclude<Category, "All">, brand: CATEGORY_BRANDS.Chips[0] || "", size: "Regular", price: "", imageUrl: "" });
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MenuItem | null>(null);
   const available = menu.filter((item) => item.available).length;
-  const resetForm = () => { setForm({ name: "", description: "", category: "Chips", size: "Regular", price: "", imageUrl: "" }); setImageUrlInput(""); };
+  const resetForm = () => { setForm({ name: "", description: "", category: "Chips", brand: CATEGORY_BRANDS.Chips[0] || "", size: "Regular", price: "", imageUrl: "" }); setImageUrlInput(""); };
+  const setCategory = (next: Exclude<Category, "All">) => setForm({ ...form, category: next, brand: CATEGORY_BRANDS[next][0] || "" });
   // Opens a Google Images search for the typed product name in a new tab.
   // Browsers don't allow a webpage to automatically read back an image the
   // owner picks on another site, so the owner finds the image there, saves
   // or copies its link, then attaches it below (upload or paste URL) —
   // this is the closest reliable workflow given that restriction.
   const searchGoogleImages = () => {
-    const query = `${form.name.trim()} product`.trim();
+    const hint = CATEGORY_IMAGE_HINT[form.category];
+    const query = hint ? `${form.name.trim()} ${hint} product` : `${form.name.trim()} product`;
     window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`, "_blank", "noopener,noreferrer");
   };
   const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
@@ -568,12 +599,13 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
   };
   return <Modal title="🍽️ Menu List" subtitle={`${available} available · ${menu.length - available} out of stock`} onClose={onClose} wide className="list-modal">
     <button className="add-food-button" onClick={() => setAdding(!adding)}>{adding ? "× Close Add Item Form" : "+ Add New Food Item"}</button>
-    {adding && <form className="new-food-form" onSubmit={(event) => { event.preventDefault(); if (!form.name || !form.price) return; onAdd({ id: `food-${Date.now()}`, name: form.name, description: form.description.trim() || undefined, emoji: "🍽️", imageUrl: form.imageUrl || undefined, category: form.category, size: form.size, price: Number(form.price), available: true }); resetForm(); setAdding(false); }}>
+    {adding && <form className="new-food-form" onSubmit={(event) => { event.preventDefault(); if (!form.name || !form.price) return; onAdd({ id: `food-${Date.now()}`, name: form.name, description: form.description.trim() || undefined, emoji: "🍽️", imageUrl: form.imageUrl || undefined, category: form.category, brand: CATEGORY_BRANDS[form.category].length ? form.brand : undefined, size: form.size, price: Number(form.price), available: true }); resetForm(); setAdding(false); }}>
       <h3>New Food Item</h3>
       <div className="new-food-grid">
         <label><span>ITEM NAME</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Chicken Roll" required /></label>
         <label><span>DESCRIPTION (OPTIONAL)</span><input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Grilled chicken, mayo, veggies" /></label>
-        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value as Exclude<Category, "All"> })}><option>Chips</option><option>Cup Noodles</option><option>Biscuits</option><option>Cakes</option><option>Ice Cream</option><option>Chocolates</option><option>Drinks</option></select></label>
+        <label><span>CATEGORY</span><select value={form.category} onChange={(event) => setCategory(event.target.value as Exclude<Category, "All">)}><option>Chips</option><option>Cup Noodles</option><option>Biscuits</option><option>Cakes</option><option>Ice Cream</option><option>Chocolates</option><option>Drinks</option></select></label>
+        {CATEGORY_BRANDS[form.category].length > 0 && <label><span>BRAND</span><select value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })}>{CATEGORY_BRANDS[form.category].map((brand) => <option key={brand}>{brand}</option>)}</select></label>}
         <label><span>SIZE / SERVING</span><input value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} /></label>
         <label><span>PRICE (₹)</span><input type="number" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} placeholder="50" required /></label>
       </div>
@@ -587,10 +619,10 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
           {form.imageUrl && <button type="button" className="remove-qr" onClick={() => setForm({ ...form, imageUrl: "" })}>Remove image</button>}
         </div>
       </div>
-      <p className="product-image-help">Search opens Google Images in a new tab for "{form.name.trim() || "your item name"} product" — save/copy the image you like, then upload it or paste its link above.</p>
+      <p className="product-image-help">Search opens Google Images in a new tab for "{form.name.trim() || "your item name"}{CATEGORY_IMAGE_HINT[form.category] ? ` ${CATEGORY_IMAGE_HINT[form.category]}` : ""} product" — save/copy the image you like, then upload it or paste its link above.</p>
       <button className="green-save-button" type="submit">Add Item to Student Menu</button>
     </form>}
-    <div className="owner-menu-modal-list">{menu.map((item) => <div className={`owner-menu-modal-row ${!item.available ? "row-out" : ""}`} key={item.id}><div className="owner-item-thumb">{item.imageUrl ? <img src={item.imageUrl} alt={item.name} /> : <Icon name="image" size={18} />}</div><div><b>{item.name}</b><small>{item.category} · {item.size} · {money(item.price)}</small></div><button className={`availability-pill ${item.available ? "available" : "out"}`} onClick={() => onToggle(item.id)}>{item.available ? "✓ Available" : "× Out of Stock"}</button><button className="delete-food-button" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`}><Icon name="trash" size={15} /></button></div>)}</div>
+    <div className="owner-menu-modal-list">{menu.map((item) => <div className={`owner-menu-modal-row ${!item.available ? "row-out" : ""}`} key={item.id}><div className="owner-item-thumb">{item.imageUrl ? <img src={item.imageUrl} alt={item.name} /> : <Icon name="image" size={18} />}</div><div><b>{item.name}</b><small>{item.category}{item.brand ? ` · ${item.brand}` : ""} · {item.size} · {money(item.price)}</small></div><button className={`availability-pill ${item.available ? "available" : "out"}`} onClick={() => onToggle(item.id)}>{item.available ? "✓ Available" : "× Out of Stock"}</button><button className="delete-food-button" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`}><Icon name="trash" size={15} /></button></div>)}</div>
     {deleteTarget && <ConfirmModal kind="delete-menu-item" itemName={deleteTarget.name} onClose={() => setDeleteTarget(null)} onConfirm={() => { onDelete(deleteTarget.id); setDeleteTarget(null); }} />}
   </Modal>;
 }
@@ -907,7 +939,7 @@ export default function App() {
     const loadMenu = async () => {
       const result = screen === "owner-dashboard"
         ? await client.rpc("owner_get_coke_station_menu", { p_pin: ownerPin })
-        : await client.from("coke_station_menu").select("id, name, category, size, price, emoji, available, description, image_url").order("created_at", { ascending: true });
+        : await client.from("coke_station_menu").select("id, name, category, size, price, emoji, available, description, image_url, brand").order("created_at", { ascending: true });
       if (!cancelled && !result.error && result.data) setMenu((result.data as Record<string, unknown>[]).map(menuItemFromDatabase));
     };
     void loadMenu();
@@ -1097,7 +1129,7 @@ export default function App() {
     const nextAvailable = !item.available;
     setMenu((current) => current.map((entry) => entry.id === id ? { ...entry, available: nextAvailable } : entry));
     if (!supabase || !ownerPin) return;
-    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: nextAvailable, p_pin: ownerPin, p_description: item.description || null, p_image_url: item.imageUrl || null });
+    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: nextAvailable, p_pin: ownerPin, p_description: item.description || null, p_image_url: item.imageUrl || null, p_brand: item.brand || null });
     const menuBackendMissing = error && ["42883", "PGRST202", "42P01", "42703"].includes(error.code || "");
     if (menuBackendMissing) { notify("Changed on this device — run MENU_IMAGES_AND_DELETE.sql to sync availability"); return; }
     if (error || data === false) { setMenu(previous); notify(error?.message || "Menu availability was not saved"); }
@@ -1106,7 +1138,7 @@ export default function App() {
     const previous = menu;
     setMenu((current) => [...current, item]);
     if (!supabase || !ownerPin) { notify(`${item.name} added`); return; }
-    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: item.available, p_pin: ownerPin, p_description: item.description || null, p_image_url: item.imageUrl || null });
+    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: item.available, p_pin: ownerPin, p_description: item.description || null, p_image_url: item.imageUrl || null, p_brand: item.brand || null });
     const menuBackendMissing = error && ["42883", "PGRST202", "42P01", "42703"].includes(error.code || "");
     if (menuBackendMissing) { notify(`${item.name} added on this device — run MENU_IMAGES_AND_DELETE.sql to sync images/descriptions`); return; }
     if (error || data === false) { setMenu(previous); notify(error?.message || "Menu item was not saved"); return; }
