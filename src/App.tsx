@@ -176,6 +176,62 @@ const defaultShifts: Shift[] = [
   { id: "shift-current", openedAt: new Date().toISOString(), orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 },
 ];
 function read<T>(key: string, fallback: T): T { try { const value = window.localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
+// localStorage has a small (~5-10MB, sometimes less in Safari/private
+// browsing) quota shared by the whole site. A handful of embedded photos
+// can blow past that instantly, and a plain localStorage.setItem() throws
+// an uncaught QuotaExceededError in that case — which used to crash the
+// entire app to a blank screen a moment after load. This never rethrows:
+// on any storage error (quota exceeded, private browsing, storage
+// disabled, etc.) the app simply continues running off in-memory state +
+// Supabase, without the local cache updating.
+function safeLocalStorageSet(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Intentionally swallowed — see comment above.
+  }
+}
+// Legacy/offline-fallback local caches should never hold embedded image
+// data (data: URIs) — real images belong in Supabase Storage, not
+// localStorage. Strips any that slip through (e.g. from an old upload,
+// or an offline-mode preview) before the cache is written.
+function withoutHeavyImages(items: MenuItem[]): MenuItem[] {
+  return items.map((item) => (item.imageUrl && item.imageUrl.startsWith("data:")) ? { ...item, imageUrl: undefined } : item);
+}
+// Cart rows also carry a full MenuItem (including whatever imageUrl it has),
+// so they need the same stripping as the menu cache above.
+function withoutHeavyImagesInCart(cartByAccount: Record<string, { item: MenuItem; quantity: number }[]>): Record<string, { item: MenuItem; quantity: number }[]> {
+  const result: Record<string, { item: MenuItem; quantity: number }[]> = {};
+  for (const [key, rows] of Object.entries(cartByAccount)) {
+    result[key] = rows.map((row) => ({ ...row, item: withoutHeavyImages([row.item])[0] }));
+  }
+  return result;
+}
+function withoutHeavyQr(settings: PaymentSettings): PaymentSettings {
+  return (settings.qrCode && settings.qrCode.startsWith("data:")) ? { ...settings, qrCode: null } : settings;
+}
+// Uploads a picked file to the public coke-station-images Storage bucket and
+// returns its public URL — used for both product photos and the payment QR
+// code, so neither ever gets embedded as a giant base64 string in the
+// database or (via the app's local cache) in localStorage.
+async function uploadToImageStore(file: File, folder: string): Promise<string> {
+  if (!supabase) {
+    // Offline/no-Supabase preview only: fall back to an in-memory-only data
+    // URL. withoutHeavyImages/withoutHeavyQr keep this out of localStorage.
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Could not read file"));
+      reader.onerror = () => reject(new Error("Could not read file"));
+      reader.readAsDataURL(file);
+    });
+  }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `${folder}/${Date.now()}-${safeName}`;
+  const { error } = await supabase.storage.from("coke-station-images").upload(path, file, { upsert: true });
+  if (error) throw error;
+  const { data } = supabase.storage.from("coke-station-images").getPublicUrl(path);
+  return data.publicUrl;
+}
 function money(value: number) { return `₹${value.toLocaleString("en-IN")}`; }
 // Stored phone numbers can show up as a bare 10-digit number, or with a "91"
 // country-code prefix but no "+" (e.g. "917200874720") — dialers reject that
@@ -621,12 +677,19 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
     const query = hint ? `${form.name.trim()} ${hint} product` : `${form.name.trim()} product`;
     window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`, "_blank", "noopener,noreferrer");
   };
-  const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => { if (typeof reader.result === "string") setForm({ ...form, imageUrl: reader.result }); };
-    reader.readAsDataURL(file);
+    setUploadingImage(true);
+    try {
+      const url = await uploadToImageStore(file, "menu");
+      setForm((current) => ({ ...current, imageUrl: url }));
+    } catch (error) {
+      window.alert(error instanceof Error ? `Could not upload image: ${error.message}` : "Could not upload image.");
+    } finally {
+      setUploadingImage(false);
+    }
   };
   return <Modal title="🍽️ Menu List" subtitle={`${available} available · ${menu.length - available} out of stock`} onClose={onClose} wide className="list-modal">
     <button className="add-food-button" onClick={() => setAdding(!adding)}>{adding ? "× Close Add Item Form" : "+ Add New Food Item"}</button>
@@ -645,7 +708,7 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
         <div className="product-image-preview">{form.imageUrl ? <img src={form.imageUrl} alt="Selected product" /> : <div className="product-image-placeholder"><Icon name="image" size={24} /></div>}</div>
         <div className="product-image-actions">
           <button type="button" className="find-image-button" onClick={searchGoogleImages} disabled={!form.name.trim()}><Icon name="search" size={14} /> Find image on Google</button>
-          <label className="replace-qr">📤 Upload image<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadImage} /></label>
+          <label className={`replace-qr ${uploadingImage ? "disabled" : ""}`}>{uploadingImage ? "Uploading…" : "📤 Upload image"}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadImage} disabled={uploadingImage} /></label>
           <div className="image-url-row"><input value={imageUrlInput} onChange={(event) => setImageUrlInput(event.target.value)} placeholder="…or paste an image URL" /><button type="button" onClick={() => { if (imageUrlInput.trim()) setForm({ ...form, imageUrl: imageUrlInput.trim() }); }}>Use</button></div>
           {form.imageUrl && <button type="button" className="remove-qr" onClick={() => setForm({ ...form, imageUrl: "" })}>Remove image</button>}
         </div>
@@ -665,13 +728,21 @@ function PaymentModal({ settings, onClose, onSave }: { settings: PaymentSettings
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const uploadQr = (event: ChangeEvent<HTMLInputElement>) => {
+  const [uploadingQr, setUploadingQr] = useState(false);
+  const uploadQr = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) { setError("QR image must be smaller than 2 MB."); return; }
-    const reader = new FileReader();
-    reader.onload = () => { setQrCode(typeof reader.result === "string" ? reader.result : null); setError(""); };
-    reader.readAsDataURL(file);
+    setUploadingQr(true);
+    try {
+      const url = await uploadToImageStore(file, "qr");
+      setQrCode(url);
+      setError("");
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? `Could not upload QR code: ${uploadError.message}` : "Could not upload QR code.");
+    } finally {
+      setUploadingQr(false);
+    }
   };
   const save = async () => {
     setError("");
@@ -686,7 +757,7 @@ function PaymentModal({ settings, onClose, onSave }: { settings: PaymentSettings
       setError(caught instanceof Error ? caught.message : "Payment settings could not be saved.");
     } finally { setSaving(false); }
   };
-  return <Modal title="💳 Online Payment Update" subtitle="UPI ID and QR code used for delivery-time payments" onClose={onClose}><div className="payment-tabs"><button type="button" className={tab === "upi" ? "active blue" : ""} onClick={() => setTab("upi")}>🧾 UPI Update</button><button type="button" className={tab === "qr" ? "active green" : ""} onClick={() => setTab("qr")}>🖼️ QR Code Update</button></div>{tab === "upi" ? <div className="payment-update-form"><label><span>FOOD STALL UPI ID</span><input value={upi} onChange={(event) => setUpi(event.target.value)} placeholder="stall@upi" autoComplete="off" /></label><p>This UPI ID is shown to the student when they pay online.</p><button className="blue-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ UPI ID Saved" : "💾 Save UPI ID"}</button>{error && <p className="payment-error">{error}</p>}</div> : <div className="qr-update-form"><span className="qr-label">FOOD STALL UPI QR CODE</span><div className="qr-preview">{qrCode ? <img className="uploaded-qr" src={qrCode} alt="Uploaded food stall UPI QR code" /> : <FakeQR />}<small>{qrCode ? "✓ Current QR code preview" : "No QR code uploaded yet"}</small></div><label className="replace-qr">🔄 {qrCode ? "Replace QR Code" : "Upload QR Code"}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadQr} /></label>{qrCode && <button className="remove-qr" type="button" onClick={() => setQrCode(null)}>Remove QR code</button>}<button className="green-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ QR Code Saved" : "💾 Save QR Code"}</button>{error && <p className="payment-error">{error}</p>}</div>}</Modal>;
+  return <Modal title="💳 Online Payment Update" subtitle="UPI ID and QR code used for delivery-time payments" onClose={onClose}><div className="payment-tabs"><button type="button" className={tab === "upi" ? "active blue" : ""} onClick={() => setTab("upi")}>🧾 UPI Update</button><button type="button" className={tab === "qr" ? "active green" : ""} onClick={() => setTab("qr")}>🖼️ QR Code Update</button></div>{tab === "upi" ? <div className="payment-update-form"><label><span>FOOD STALL UPI ID</span><input value={upi} onChange={(event) => setUpi(event.target.value)} placeholder="stall@upi" autoComplete="off" /></label><p>This UPI ID is shown to the student when they pay online.</p><button className="blue-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ UPI ID Saved" : "💾 Save UPI ID"}</button>{error && <p className="payment-error">{error}</p>}</div> : <div className="qr-update-form"><span className="qr-label">FOOD STALL UPI QR CODE</span><div className="qr-preview">{qrCode ? <img className="uploaded-qr" src={qrCode} alt="Uploaded food stall UPI QR code" /> : <FakeQR />}<small>{qrCode ? "✓ Current QR code preview" : "No QR code uploaded yet"}</small></div><label className={`replace-qr ${uploadingQr ? "disabled" : ""}`}>{uploadingQr ? "Uploading…" : `🔄 ${qrCode ? "Replace QR Code" : "Upload QR Code"}`}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadQr} disabled={uploadingQr} /></label>{qrCode && <button className="remove-qr" type="button" onClick={() => setQrCode(null)}>Remove QR code</button>}<button className="green-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ QR Code Saved" : "💾 Save QR Code"}</button>{error && <p className="payment-error">{error}</p>}</div>}</Modal>;
 }
 function FakeQR() { const bits = [1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,1,0,1,1,0,0,1,0,1,1,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,1,0,1,1,0]; return <div className="fake-qr-grid">{bits.map((bit, i) => <i className={bit ? "on" : ""} key={i} />)}</div>; }
 // Builds a standard UPI deep-link URI with the exact order amount baked in, so
@@ -900,11 +971,11 @@ export default function App() {
   const [orderPlaced, setOrderPlaced] = useState<Order | null>(null);
   const [toast, setToast] = useState("");
 
-  useEffect(() => { window.localStorage.setItem("legacy-coke-menu", JSON.stringify(menu)); }, [menu]);
-  useEffect(() => { window.localStorage.setItem("legacy-coke-orders", JSON.stringify(orders)); }, [orders]);
-  useEffect(() => { window.localStorage.setItem("legacy-coke-shifts", JSON.stringify(shifts)); }, [shifts]);
-  useEffect(() => { window.localStorage.setItem("legacy-coke-shop", JSON.stringify(shopOpen)); }, [shopOpen]);
-  useEffect(() => { window.localStorage.setItem("legacy-coke-payment-settings", JSON.stringify(paymentSettings)); }, [paymentSettings]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-menu", JSON.stringify(withoutHeavyImages(menu))); }, [menu]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-orders", JSON.stringify(orders)); }, [orders]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-shifts", JSON.stringify(shifts)); }, [shifts]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-shop", JSON.stringify(shopOpen)); }, [shopOpen]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-payment-settings", JSON.stringify(withoutHeavyQr(paymentSettings))); }, [paymentSettings]);
   // Load the current owner payment settings when the owner signs in.
   useEffect(() => {
     const client = supabase;
@@ -952,7 +1023,7 @@ export default function App() {
     const key = activeAccountKey.current;
     setCartByAccount((current) => ({ ...current, [key]: cart }));
   }, [cart]);
-  useEffect(() => { window.localStorage.setItem("legacy-coke-carts", JSON.stringify(cartByAccount)); }, [cartByAccount]);
+  useEffect(() => { safeLocalStorageSet("legacy-coke-carts", JSON.stringify(withoutHeavyImagesInCart(cartByAccount))); }, [cartByAccount]);
   // Load the next student's basket whenever the authenticated account changes.
   useEffect(() => {
     activeAccountKey.current = accountKey;
