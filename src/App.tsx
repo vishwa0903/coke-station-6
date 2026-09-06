@@ -155,7 +155,7 @@ const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
   Chips: pexels(479628),
   "Cup Noodles": pexels(29514695),
   Biscuits: pexels(11833309),
-  Cakes: pexels(19940993),
+  Cakes: pexels(30128890),
   "Ice Cream": pexels(1294943),
   Chocolates: pexels(1693027),
   Drinks: pexels(8679338),
