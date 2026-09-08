@@ -156,14 +156,14 @@ const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
   "Cup Noodles": "/categories/cup-noodles.jpg",
   Biscuits: "/categories/biscuits.jpg",
   Cakes: "/categories/cakes.jpg",
-  "Ice Cream": pexels(1294943),
+  "Ice Cream": "/categories/ice-cream.jpg",
   Chocolates: "/categories/chocolates.jpg",
   Drinks: "/categories/drinks.jpg",
   Hot: "/categories/hot.jpg",
   Cold: "/categories/cold.jpg",
   Maggie: "/categories/maggie.jpg",
-  Sandwich: pexels(5446516),
-  Omelette: pexels(10934498),
+  Sandwich: "/categories/sandwich.jpg",
+  Omelette: "/categories/omelette.jpg",
   Burger: "/categories/burger.jpg",
 };
 // Starting fresh with the new category set — no pre-seeded items. The real
