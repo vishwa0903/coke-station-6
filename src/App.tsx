@@ -153,18 +153,18 @@ function pexels(id: number) { return `https://images.pexels.com/photos/${id}/pex
 // commercial use, no attribution required).
 const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
   Chips: "/categories/chips.jpg",
-  "Cup Noodles": pexels(29514695),
-  Biscuits: pexels(11833309),
-  Cakes: pexels(291528),
+  "Cup Noodles": "/categories/cup-noodles.jpg",
+  Biscuits: "/categories/biscuits.jpg",
+  Cakes: "/categories/cakes.jpg",
   "Ice Cream": pexels(1294943),
-  Chocolates: pexels(1693027),
-  Drinks: pexels(8679338),
-  Hot: pexels(9464939),
-  Cold: pexels(8880742),
-  Maggie: pexels(2764905),
+  Chocolates: "/categories/chocolates.jpg",
+  Drinks: "/categories/drinks.jpg",
+  Hot: "/categories/hot.jpg",
+  Cold: "/categories/cold.jpg",
+  Maggie: "/categories/maggie.jpg",
   Sandwich: pexels(5446516),
   Omelette: pexels(10934498),
-  Burger: pexels(70497),
+  Burger: "/categories/burger.jpg",
 };
 // Starting fresh with the new category set — no pre-seeded items. The real
 // menu is loaded from Supabase; this only matters as the initial state
