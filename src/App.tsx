@@ -152,7 +152,7 @@ function pexels(id: number) { return `https://images.pexels.com/photos/${id}/pex
 // Real product/food photography for each category card (Pexels — free for
 // commercial use, no attribution required).
 const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
-  Chips: pexels(479628),
+  Chips: "/categories/chips.jpg",
   "Cup Noodles": pexels(29514695),
   Biscuits: pexels(11833309),
   Cakes: pexels(291528),
