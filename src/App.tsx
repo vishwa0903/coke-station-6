@@ -659,24 +659,26 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onReject, onAdvance, 
     </article>;
   })}</div> : <div className="owner-empty-state"><span>📫</span><h3>No orders yet</h3><p>Orders from students will appear here</p></div>}</section>;
 }
-function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: MenuItem[]; onClose: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDelete: (id: string) => void }) {
+function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete, onUpdateImage }: { menu: MenuItem[]; onClose: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDelete: (id: string) => void; onUpdateImage: (id: string, imageUrl: string) => void }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", category: "Chips" as Exclude<Category, "All">, brand: CATEGORY_BRANDS.Chips[0] || "", size: "Regular", price: "", imageUrl: "" });
   const [imageUrlInput, setImageUrlInput] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<MenuItem | null>(null);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<Exclude<Category, "All">>>(new Set());
+  const [imageEditTarget, setImageEditTarget] = useState<MenuItem | null>(null);
+  const [imageEditUrlInput, setImageEditUrlInput] = useState("");
+  const [imageEditUploading, setImageEditUploading] = useState(false);
   const available = menu.filter((item) => item.available).length;
   const resetForm = () => { setForm({ name: "", description: "", category: "Chips", brand: CATEGORY_BRANDS.Chips[0] || "", size: "Regular", price: "", imageUrl: "" }); setImageUrlInput(""); };
   const setCategory = (next: Exclude<Category, "All">) => setForm({ ...form, category: next, brand: CATEGORY_BRANDS[next][0] || "" });
+  const googleImagesQuery = (name: string, category: Exclude<Category, "All">) => { const hint = CATEGORY_IMAGE_HINT[category]; return hint ? `${name.trim()} ${hint} product` : `${name.trim()} product`; };
   // Opens a Google Images search for the typed product name in a new tab.
   // Browsers don't allow a webpage to automatically read back an image the
   // owner picks on another site, so the owner finds the image there, saves
   // or copies its link, then attaches it below (upload or paste URL) —
   // this is the closest reliable workflow given that restriction.
-  const searchGoogleImages = () => {
-    const hint = CATEGORY_IMAGE_HINT[form.category];
-    const query = hint ? `${form.name.trim()} ${hint} product` : `${form.name.trim()} product`;
-    window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`, "_blank", "noopener,noreferrer");
-  };
+  const searchGoogleImages = () => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(googleImagesQuery(form.name, form.category))}`, "_blank", "noopener,noreferrer");
   const [uploadingImage, setUploadingImage] = useState(false);
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -691,6 +693,29 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
       setUploadingImage(false);
     }
   };
+  const uploadImageForTarget = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !imageEditTarget) return;
+    setImageEditUploading(true);
+    try {
+      const url = await uploadToImageStore(file, "menu");
+      onUpdateImage(imageEditTarget.id, url);
+      setImageEditTarget(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? `Could not upload image: ${error.message}` : "Could not upload image.");
+    } finally {
+      setImageEditUploading(false);
+    }
+  };
+  const query = search.trim().toLowerCase();
+  const filteredMenu = query ? menu.filter((item) => item.name.toLowerCase().includes(query)) : menu;
+  // Search bypasses category grouping entirely (matching the student-side
+  // menu) since a flat filtered list is what's useful when searching. With
+  // no search active, group into the 13 categories, collapsible, so the
+  // owner isn't scrolling a single list of 100+ items to find one.
+  const groupedByCategory = query ? [] : categories.filter((entry) => entry.name !== "All").map((entry) => ({ category: entry.name as Exclude<Category, "All">, items: menu.filter((item) => item.category === entry.name) })).filter((group) => group.items.length > 0);
+  const toggleExpanded = (category: Exclude<Category, "All">) => setExpanded((current) => { const next = new Set(current); if (next.has(category)) next.delete(category); else next.add(category); return next; });
+  const renderRow = (item: MenuItem) => <div className={`owner-menu-modal-row ${!item.available ? "row-out" : ""}`} key={item.id}><button type="button" className="owner-item-thumb" onClick={() => { setImageEditTarget(item); setImageEditUrlInput(""); }} aria-label={item.imageUrl ? `Change photo for ${item.name}` : `Add photo for ${item.name}`}>{item.imageUrl ? <img src={item.imageUrl} alt={item.name} /> : <Icon name="image" size={18} />}{!item.imageUrl && <span className="thumb-add-badge">+</span>}</button><div><b>{item.name}</b><small>{item.category}{item.brand ? ` · ${item.brand}` : ""} · {item.size} · {money(item.price)}</small></div><button className={`availability-pill ${item.available ? "available" : "out"}`} onClick={() => onToggle(item.id)}>{item.available ? "✓ Available" : "× Out of Stock"}</button><button className="delete-food-button" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`}><Icon name="trash" size={15} /></button></div>;
   return <Modal title="🍽️ Menu List" subtitle={`${available} available · ${menu.length - available} out of stock`} onClose={onClose} wide className="list-modal">
     <button className="add-food-button" onClick={() => setAdding(!adding)}>{adding ? "× Close Add Item Form" : "+ Add New Food Item"}</button>
     {adding && <form className="new-food-form" onSubmit={(event) => { event.preventDefault(); if (!form.name || !form.price) return; onAdd({ id: `food-${Date.now()}`, name: form.name, description: form.description.trim() || undefined, emoji: "🍽️", imageUrl: form.imageUrl || undefined, category: form.category, brand: CATEGORY_BRANDS[form.category].length ? form.brand : undefined, size: form.size, price: Number(form.price), available: true }); resetForm(); setAdding(false); }}>
@@ -716,8 +741,25 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onDelete }: { menu: Men
       <p className="product-image-help">Search opens Google Images in a new tab for "{form.name.trim() || "your item name"}{CATEGORY_IMAGE_HINT[form.category] ? ` ${CATEGORY_IMAGE_HINT[form.category]}` : ""} product" — save/copy the image you like, then upload it or paste its link above.</p>
       <button className="green-save-button" type="submit">Add Item to Student Menu</button>
     </form>}
-    <div className="owner-menu-modal-list">{menu.map((item) => <div className={`owner-menu-modal-row ${!item.available ? "row-out" : ""}`} key={item.id}><div className="owner-item-thumb">{item.imageUrl ? <img src={item.imageUrl} alt={item.name} /> : <Icon name="image" size={18} />}</div><div><b>{item.name}</b><small>{item.category}{item.brand ? ` · ${item.brand}` : ""} · {item.size} · {money(item.price)}</small></div><button className={`availability-pill ${item.available ? "available" : "out"}`} onClick={() => onToggle(item.id)}>{item.available ? "✓ Available" : "× Out of Stock"}</button><button className="delete-food-button" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`}><Icon name="trash" size={15} /></button></div>)}</div>
+    <div className="owner-menu-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="owner-menu-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div>
+    <div className="owner-menu-modal-list">
+      {query
+        ? (filteredMenu.length ? filteredMenu.map(renderRow) : <p className="owner-menu-empty">No food items found</p>)
+        : groupedByCategory.map((group) => { const isOpen = expanded.has(group.category); const availCount = group.items.filter((item) => item.available).length; return <div className="owner-category-group" key={group.category}><button type="button" className="owner-category-header" onClick={() => toggleExpanded(group.category)}><span>{group.category}</span><small>{availCount}/{group.items.length} available</small><span className={`owner-category-chevron ${isOpen ? "open" : ""}`}><Icon name="arrow" size={13} /></span></button>{isOpen && group.items.map(renderRow)}</div>; })}
+    </div>
     {deleteTarget && <ConfirmModal kind="delete-menu-item" itemName={deleteTarget.name} onClose={() => setDeleteTarget(null)} onConfirm={() => { onDelete(deleteTarget.id); setDeleteTarget(null); }} />}
+    {imageEditTarget && <Modal title={`📷 ${imageEditTarget.imageUrl ? "Change" : "Add"} Photo`} subtitle={imageEditTarget.name} onClose={() => setImageEditTarget(null)}>
+      <div className="product-image-picker" style={{ padding: "18px 21px 0" }}>
+        <div className="product-image-preview">{imageEditTarget.imageUrl ? <img src={imageEditTarget.imageUrl} alt={imageEditTarget.name} /> : <div className="product-image-placeholder"><Icon name="image" size={24} /></div>}</div>
+        <div className="product-image-actions">
+          <button type="button" className="find-image-button" onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(googleImagesQuery(imageEditTarget.name, imageEditTarget.category))}`, "_blank", "noopener,noreferrer")}><Icon name="search" size={14} /> Find image on Google</button>
+          <label className={`replace-qr ${imageEditUploading ? "disabled" : ""}`}>{imageEditUploading ? "Uploading…" : "📤 Upload image"}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadImageForTarget} disabled={imageEditUploading} /></label>
+          <div className="image-url-row"><input value={imageEditUrlInput} onChange={(event) => setImageEditUrlInput(event.target.value)} placeholder="…or paste an image URL" /><button type="button" onClick={() => { if (imageEditUrlInput.trim()) { onUpdateImage(imageEditTarget.id, imageEditUrlInput.trim()); setImageEditTarget(null); } }}>Use</button></div>
+          {imageEditTarget.imageUrl && <button type="button" className="remove-qr" onClick={() => { onUpdateImage(imageEditTarget.id, ""); setImageEditTarget(null); }}>Remove image</button>}
+        </div>
+      </div>
+      <p className="product-image-help" style={{ padding: "0 21px 21px" }}>Search opens Google Images in a new tab for "{imageEditTarget.name}{CATEGORY_IMAGE_HINT[imageEditTarget.category] ? ` ${CATEGORY_IMAGE_HINT[imageEditTarget.category]}` : ""} product" — save/copy the image you like, then upload it or paste its link above.</p>
+    </Modal>}
   </Modal>;
 }
 
@@ -929,7 +971,7 @@ function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt,
   const historySummary: HistorySummary = { allOrders: all, onlineReceived: online, codReceived: cod, grandTotal: online + cod };
   return <Modal title="📊 Sales History" subtitle="One history record for every Shop Open → Shop Closed session" onClose={onClose} wide className="history-modal"><div className="history-modal-toolbar"><span>Daily summary · confirmed payments only</span><HistoryDownloadButtons summary={historySummary} rows={historyRows} /></div><div className="history-stat-grid"><div><small>ALL ORDERS</small><b>{all}</b></div><div><small>ONLINE RECEIVED</small><b className="blue-text">{money(online)}</b></div><div><small>COD RECEIVED</small><b className="orange-text">{money(cod)}</b></div><div><small>GRAND TOTAL</small><b className="green-text">{money(online + cod)}</b></div></div>{loadError && <p className="history-load-error">{loadError}</p>}<div className="history-session-list">{sessions === null && <p className="history-loading">Loading synced session history…</p>}{usingSyncedSessions ? <>{shopOpen && currentSession && liveStats && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(currentSession.openedAt)} · {clock(currentSession.openedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{liveStats.orderCount} {liveStats.orderCount === 1 ? "order" : "orders"}</strong></div><div className="session-money"><span>ONLINE <b>{money(liveStats.online)}</b><small>confirmed</small></span><span>COD <b>{money(liveStats.cod)}</b><small>confirmed</small></span><span>TOTAL <b>{money(liveStats.total)}</b><small>{liveStats.pending} pending</small></span></div></div>}{completedSessionStats.map(({ session, stats }) => <div className="history-session" key={session.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(session.openedAt)}</small><small>Closed: {dateTime(session.closedAt || session.openedAt)}</small></div><div className="session-actions"><strong>{stats.orderCount} {stats.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(session.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(stats.online)}</b><small>{stats.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(stats.cod)}</b><small>{stats.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(stats.total)}</b><small>{stats.pending} pending</small></span></div></div>)}</> : <>{shopOpen && <div className="history-session current"><div className="session-head"><div><b><span className="green-status-dot" /> Current Open Session</b><small>Opened: {shortDate(shiftStartedAt)} · {clock(shiftStartedAt)}</small><em>Running now — closes when owner presses Shop Closed</em></div><strong>{legacyLiveOrders.length} orders</strong></div></div>}{legacyCompletedShifts.map((shift) => <div className="history-session" key={shift.id}><div className="session-head"><div><b>🔒 Completed Shop Session</b><small>Opened: {dateTime(shift.openedAt)}</small><small>Closed: {dateTime(shift.closedAt || shift.openedAt)}</small></div><div className="session-actions"><strong>{shift.orderCount} {shift.orderCount === 1 ? "order" : "orders"}</strong><button onClick={() => hideSession(shift.id)}>×</button></div></div><div className="session-money"><span>ONLINE <b className="blue-text">{money(shift.online)}</b><small>{shift.online ? "confirmed" : "0 confirmed"}</small></span><span>COD <b className="orange-text">{money(shift.cod)}</b><small>{shift.cod ? "confirmed" : "0 confirmed"}</small></span><span>TOTAL <b className="green-text">{money(shift.total)}</b><small>{shift.pending} pending</small></span></div></div>)}</>}</div></Modal>;
 }
-function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onDeleteMenuItem, onPaymentSave, onAdvance, onPay, onReject, onCompleteDelivery, onCall, onNavigate, onDeleteShift }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDeleteMenuItem: (id: string) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onReject: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void }) {
+function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSettings, shiftStartedAt, onShop, onScratch, onMenu, onPayment, onHistory, onLogout, onToggle, onAdd, onDeleteMenuItem, onUpdateMenuItemImage, onPaymentSave, onAdvance, onPay, onReject, onCompleteDelivery, onCall, onNavigate, onDeleteShift }: { menu: MenuItem[]; orders: Order[]; shifts: Shift[]; shopOpen: boolean; ownerPin: string; paymentSettings: PaymentSettings; shiftStartedAt: string; onShop: () => void | Promise<void>; onScratch: () => void; onMenu: () => void; onPayment: () => void; onHistory: () => void; onLogout: () => void; onToggle: (id: string) => void; onAdd: (item: MenuItem) => void; onDeleteMenuItem: (id: string) => void; onUpdateMenuItemImage: (id: string, imageUrl: string) => void; onPaymentSave: (settings: PaymentSettings) => void | Promise<void>; onAdvance: (id: string) => void; onPay: (id: string, method?: PaymentMethod) => void; onReject: (id: string) => void; onCompleteDelivery: (id: string) => void; onCall: (phone: string) => void; onNavigate: (message: string) => void; onDeleteShift: (id: string) => void }) {
   const [actionMenu, setActionMenu] = useState(false);
   const [modal, setModal] = useState<"shop" | "scratch" | "menu" | "payment" | "history" | null>(null);
   useEffect(() => {
@@ -940,7 +982,7 @@ function OwnerDashboard({ menu, orders, shifts, shopOpen, ownerPin, paymentSetti
   const currentShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime());
   const paidOnline = currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
   const paidCod = currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid" && order.status !== "Cancelled").reduce((sum, order) => sum + order.total, 0);
-  return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} newOrderCount={currentShiftOrders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(currentShiftOrders.length)} helper={`since ${clock(shiftStartedAt)}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={currentShiftOrders} paymentSettings={paymentSettings} onPayment={onPay} onReject={onReject} onAdvance={onAdvance} onCompleteDelivery={onCompleteDelivery} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} onDelete={onDeleteMenuItem} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} ownerPin={ownerPin} shifts={shifts} shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} onClose={() => setModal(null)} onDelete={onDeleteShift} />}</div>;
+  return <div className="owner-page"><OwnerHeader shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} newOrderCount={currentShiftOrders.filter((order) => order.status === "New").length} onMenu={() => setActionMenu(!actionMenu)} menuOpen={actionMenu} onCloseMenu={() => setActionMenu(false)} /><main className="owner-dashboard-main"><div className="owner-stat-grid"><StatCard icon="📋" title="SHIFT ORDERS" value={String(currentShiftOrders.length)} helper={`since ${clock(shiftStartedAt)}`} color="neutral" /><StatCard icon="💳" title="ONLINE RECEIVED" value={money(paidOnline)} helper={`${currentShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").length} confirmed this shift`} color="blue" /><StatCard icon="💵" title="COD RECEIVED" value={money(paidCod)} helper={`${currentShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").length} confirmed this shift`} color="orange" /><StatCard icon="💰" title="GRAND TOTAL" value={money(paidOnline + paidCod)} helper="current shift · confirmed only" color="green" /></div><OwnerOrders orders={currentShiftOrders} paymentSettings={paymentSettings} onPayment={onPay} onReject={onReject} onAdvance={onAdvance} onCompleteDelivery={onCompleteDelivery} onCall={onCall} onNavigate={onNavigate} /></main>{modal === "shop" && <ConfirmModal kind="shop" shopOpen={shopOpen} onClose={() => setModal(null)} onConfirm={() => { onShop(); setModal(null); }} />}{modal === "scratch" && <ConfirmModal kind="scratch" onClose={() => setModal(null)} onConfirm={() => { onScratch(); setModal(null); }} />}{modal === "menu" && <MenuListModal menu={menu} onClose={() => setModal(null)} onToggle={onToggle} onAdd={onAdd} onDelete={onDeleteMenuItem} onUpdateImage={onUpdateMenuItemImage} />}{modal === "payment" && <PaymentModal settings={paymentSettings} onClose={() => setModal(null)} onSave={async (next) => { await onPaymentSave(next); setModal(null); }} />}{modal === "history" && <SalesHistoryModal orders={orders} ownerPin={ownerPin} shifts={shifts} shopOpen={shopOpen} shiftStartedAt={shiftStartedAt} onClose={() => setModal(null)} onDelete={onDeleteShift} />}</div>;
 }
 
 export default function App() {
@@ -1246,6 +1288,22 @@ export default function App() {
     if (error || data === false) { setMenu(previous); notify(error?.message || "Menu item was not saved"); return; }
     notify(`${item.name} added`);
   };
+  // Attaches/changes just the photo on an existing item, without touching
+  // its name/price/category/etc — used by the "+" on a menu row that has
+  // no photo yet, so the owner doesn't need to re-open the full Add Item
+  // form to fix a single missing image.
+  const updateMenuItemImage = async (id: string, imageUrl: string) => {
+    const previous = menu;
+    const item = menu.find((entry) => entry.id === id);
+    if (!item) return;
+    setMenu((current) => current.map((entry) => entry.id === id ? { ...entry, imageUrl } : entry));
+    if (!supabase || !ownerPin) { notify(`${item.name} photo updated`); return; }
+    const { data, error } = await supabase.rpc("owner_upsert_coke_station_menu", { p_id: item.id, p_name: item.name, p_category: item.category, p_size: item.size, p_price: item.price, p_emoji: item.emoji, p_available: item.available, p_pin: ownerPin, p_description: item.description || null, p_image_url: imageUrl || null, p_brand: item.brand || null });
+    const menuBackendMissing = error && ["42883", "PGRST202", "42P01", "42703"].includes(error.code || "");
+    if (menuBackendMissing) { notify(`${item.name} photo updated on this device — run MENU_IMAGES_AND_DELETE.sql to sync images`); return; }
+    if (error || data === false) { setMenu(previous); notify(error?.message || "Photo was not saved"); return; }
+    notify(`${item.name} photo updated`);
+  };
   // Permanently removes a food item from the active menu. Past orders keep
   // their own snapshot of the item's name/price/quantity (orders.items is a
   // plain JSON copy taken at order time, not a live reference to the menu
@@ -1443,7 +1501,7 @@ export default function App() {
   else if (screen === "forgot-password") screenContent = <ForgotPasswordPage onBack={() => setScreen("student-login")} onSuccess={notify} />;
   else if (screen === "owner-pin") screenContent = <Login owner onBack={() => setScreen("landing")} onSuccess={(pin) => { setOwnerPin(pin || ""); setScreen("owner-dashboard"); }} />;
   else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} notification={studentNotification} onDismissNotification={() => setStudentNotification(null)} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} />;
-  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onDeleteMenuItem={deleteMenuItem} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onReject={rejectOrder} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} />;
+  else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onDeleteMenuItem={deleteMenuItem} onUpdateMenuItemImage={updateMenuItemImage} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onReject={rejectOrder} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} />;
 
   return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
 }
