@@ -225,9 +225,17 @@ async function uploadToImageStore(file: File, folder: string): Promise<string> {
       reader.readAsDataURL(file);
     });
   }
+  if (file.size === 0) {
+    throw new Error("That file appears to be empty (0 bytes) — try selecting it again, or pick a different photo.");
+  }
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = `${folder}/${Date.now()}-${safeName}`;
-  const { error } = await supabase.storage.from("coke-station-images").upload(path, file, { upsert: true });
+  // Uploading the raw File object directly can fail with a "No content
+  // provided" error in some browsers (Safari in particular) — reading it
+  // into an ArrayBuffer first and uploading that, with an explicit
+  // contentType, avoids the issue.
+  const bytes = await file.arrayBuffer();
+  const { error } = await supabase.storage.from("coke-station-images").upload(path, bytes, { upsert: true, contentType: file.type || "image/jpeg" });
   if (error) throw error;
   const { data } = supabase.storage.from("coke-station-images").getPublicUrl(path);
   return data.publicUrl;
