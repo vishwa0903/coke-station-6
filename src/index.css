@@ -385,8 +385,6 @@ input, select { outline: none; }
 .old-order-amount { flex: none; color: #f3edf0; text-align: right; }
 .old-order-amount > b { display: block; font-size: 15px; }
 .old-order-amount > small { display: block; margin-top: 4px; color: #40dc72; font-size: 8px; }
-.call-now { min-width: 91px; min-height: 35px; margin-top: 8px; border: 0; border-radius: 8px; background: #1dce58; color: #06110a; box-shadow: 0 0 16px rgba(29,206,88,.22); font-size: 9px; font-weight: 900; }
-.call-now:hover { background: #35e970; }
 .old-order-person { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; margin-top: 6px; color: #81798a; font-size: 10px; }
 .old-phone-line { flex-basis: 100%; color: #81798a; }
 .old-items { margin-top: 14px; padding: 9px 0; }
@@ -421,7 +419,6 @@ input, select { outline: none; }
   .old-order-title { gap: 5px; }
   .old-hostel { font-size: 12px; }
   .old-order-amount > b { font-size: 13px; }
-  .call-now { min-width: 76px; min-height: 31px; font-size: 8px; }
   .old-delivery-grid { grid-template-columns: 1fr 1fr; }
   .cash-entry { flex-wrap: wrap; }
   .cash-entry input { flex-basis: calc(100% - 23px); }
