@@ -1070,7 +1070,7 @@ export default function App() {
       if (!cancelled && typeof data === "string" && data.trim()) setPaymentSettings((current) => ({ ...current, upiId: data.trim() }));
     };
     void loadStudentUpi();
-    const timer = window.setInterval(() => { void loadStudentUpi(); }, 3000);
+    const timer = window.setInterval(() => { void loadStudentUpi(); }, 15000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
   // Shop status is shared through Supabase when the status migration is installed;
@@ -1087,7 +1087,7 @@ export default function App() {
       }
     };
     void loadShopStatus();
-    const timer = window.setInterval(() => { void loadShopStatus(); }, 2500);
+    const timer = window.setInterval(() => { void loadShopStatus(); }, 8000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
   // Save the active account's basket under its own key. This prevents one student's
@@ -1118,7 +1118,7 @@ export default function App() {
       if (!cancelled && !result.error && result.data) setMenu((result.data as Record<string, unknown>[]).map(menuItemFromDatabase));
     };
     void loadMenu();
-    const timer = window.setInterval(() => { void loadMenu(); }, 3000);
+    const timer = window.setInterval(() => { void loadMenu(); }, 10000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [screen, ownerPin, profile.id]);
   // An item marked out of stock on the owner's device is removed from any open student cart.
@@ -1534,7 +1534,7 @@ export default function App() {
     const loadOrders = screen === "owner-dashboard" && ownerPin ? fetchOwnerOrders : screen === "student-menu" && profile.id ? fetchStudentOrders : null;
     if (!loadOrders) return;
     void loadOrders();
-    const timer = window.setInterval(() => { void loadOrders(); }, 2000);
+    const timer = window.setInterval(() => { void loadOrders(); }, 6000);
     return () => window.clearInterval(timer);
   }, [screen, ownerPin, profile.id]);
 
