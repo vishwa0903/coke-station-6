@@ -1,0 +1,75 @@
+mutation SeedDatabase @transaction @auth(level: NO_ACCESS) {
+  machine_insertMany(data: [
+    {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      locationName: "Downtown Store",
+      address: "123 Main St"
+    },
+    {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      locationName: "Airport Terminal",
+      address: "456 Runway Rd"
+    },
+    {
+      id: "550e8400-e29b-41d4-a716-446655440002",
+      locationName: "Office Lobby",
+      address: "789 Corporate Blvd"
+    }
+  ])
+  product_insertMany(data: [
+    {
+      id: "660e8400-e29b-41d4-a716-446655440000",
+      name: "Cola",
+      category: "Drink",
+      basePrice: 1.50
+    },
+    {
+      id: "660e8400-e29b-41d4-a716-446655440001",
+      name: "Chips",
+      category: "Snack",
+      basePrice: 2.00
+    },
+    {
+      id: "660e8400-e29b-41d4-a716-446655440002",
+      name: "Chocolate Bar",
+      category: "Snack",
+      basePrice: 1.25
+    }
+  ])
+  inventory_insertMany(data: [
+    {
+      machineId: "550e8400-e29b-41d4-a716-446655440000",
+      productId: "660e8400-e29b-41d4-a716-446655440000",
+      currentStock: 50
+    },
+    {
+      machineId: "550e8400-e29b-41d4-a716-446655440001",
+      productId: "660e8400-e29b-41d4-a716-446655440001",
+      currentStock: 20
+    }
+  ])
+  order_insertMany(data: [
+    {
+      id: "770e8400-e29b-41d4-a716-446655440000",
+      totalAmount: 3.50,
+      status: "COMPLETED",
+      paymentGateway: "STRIPE",
+      userId: "user_001",
+      machineId: "550e8400-e29b-41d4-a716-446655440000"
+    }
+  ])
+  orderItem_insertMany(data: [
+    {
+      quantity: 1,
+      priceAtPurchase: 1.50,
+      orderId: "770e8400-e29b-41d4-a716-446655440000",
+      productId: "660e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      quantity: 1,
+      priceAtPurchase: 2.00,
+      orderId: "770e8400-e29b-41d4-a716-446655440000",
+      productId: "660e8400-e29b-41d4-a716-446655440001"
+    }
+  ])
+}

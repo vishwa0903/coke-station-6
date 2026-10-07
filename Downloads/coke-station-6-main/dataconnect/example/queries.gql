@@ -1,0 +1,40 @@
+mutation CreateAllData @transaction @auth(level: USER) {
+  machine_insert(data: {locationName: "Main Street", address: "123 Main St"})
+  product_insert(data: {name: "Soda", category: "Drink", basePrice: 1.5})
+  order_insert(data: {totalAmount: 1.5, status: "pending", paymentGateway: "stripe", userId_expr: "auth.uid", machine: {id: "00000000-0000-0000-0000-000000000000"}})
+  orderItem_insert(data: {quantity: 1, priceAtPurchase: 1.5, order: {id: "00000000-0000-0000-0000-000000000000"}, product: {id: "00000000-0000-0000-0000-000000000000"}})
+  inventory_insert(data: {currentStock: 10, machine: {id: "00000000-0000-0000-0000-000000000000"}, product: {id: "00000000-0000-0000-0000-000000000000"}})
+}
+
+mutation UpdateAllData @transaction @auth(level: USER) {
+  machine_update(id: "00000000-0000-0000-0000-000000000000", data: {locationName: "New Location"})
+  product_update(id: "00000000-0000-0000-0000-000000000000", data: {basePrice: 2.0})
+  order_update(id: "00000000-0000-0000-0000-000000000000", data: {status: "completed"})
+  orderItem_update(id: "00000000-0000-0000-0000-000000000000", data: {quantity: 2})
+  inventory_update(id: "00000000-0000-0000-0000-000000000000", data: {currentStock: 8})
+}
+
+mutation DeleteAllData @transaction @auth(level: USER) {
+  machine_delete(id: "00000000-0000-0000-0000-000000000000")
+  product_delete(id: "00000000-0000-0000-0000-000000000000")
+  order_delete(id: "00000000-0000-0000-0000-000000000000")
+  orderItem_delete(id: "00000000-0000-0000-0000-000000000000")
+  inventory_delete(id: "00000000-0000-0000-0000-000000000000")
+}
+
+query ReadAllData @auth(level: USER) {
+  machine(id: "00000000-0000-0000-0000-000000000000") { locationName }
+  product(id: "00000000-0000-0000-0000-000000000000") { name }
+  order(id: "00000000-0000-0000-0000-000000000000") { totalAmount }
+  orderItem(id: "00000000-0000-0000-0000-000000000000") { quantity }
+  inventory(id: "00000000-0000-0000-0000-000000000000") { currentStock }
+  machines { locationName }
+  products { name }
+  orders(where: {userId: {eq_expr: "auth.uid"}}) { id }
+  orderItems { quantity }
+  inventories { currentStock }
+}
+
+query PublicData @auth(level: PUBLIC, insecureReason: "Listing products is required for guest browsing.") {
+  products { name basePrice imageUrl }
+}

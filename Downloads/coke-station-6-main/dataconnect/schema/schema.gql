@@ -1,0 +1,33 @@
+type Machine @table {
+  locationName: String!
+  address: String!
+  lastRestockDate: Timestamp
+}
+
+type Product @table {
+  name: String!
+  category: String!
+  basePrice: Float!
+  imageUrl: String
+}
+
+type Inventory @table {
+  currentStock: Int!
+  machine: Machine!
+  product: Product!
+}
+
+type Order @table {
+  totalAmount: Float!
+  status: String!
+  paymentGateway: String!
+  userId: String!
+  machine: Machine!
+}
+
+type OrderItem @table {
+  quantity: Int!
+  priceAtPurchase: Float!
+  order: Order!
+  product: Product!
+}
