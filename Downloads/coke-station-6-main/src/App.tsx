@@ -114,6 +114,9 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 const categories: { name: Category; emoji: string }[] = [
   { name: "All", emoji: "🌙" }, { name: "Chips", emoji: "🥔" }, { name: "Cup Noodles", emoji: "🍜" }, { name: "Biscuits", emoji: "🍪" }, { name: "Cakes", emoji: "🍰" }, { name: "Ice Cream", emoji: "🍦" }, { name: "Chocolates", emoji: "🍫" }, { name: "Drinks", emoji: "🥤" }, { name: "Hot", emoji: "☕" }, { name: "Cold", emoji: "🧊" }, { name: "Maggie", emoji: "🍲" }, { name: "Sandwich", emoji: "🥪" }, { name: "Omelette", emoji: "🍳" }, { name: "Burger", emoji: "🍔" },
 ];
+// Only these 4 categories have a brand layer — every other category
+// (including the 6 added later) shows products directly under the
+// category with no brand step.
 const CATEGORY_BRANDS: Record<Exclude<Category, "All">, string[]> = {
   Chips: ["Max Protein", "Bingo", "Lays"],
   "Cup Noodles": [],
@@ -129,6 +132,8 @@ const CATEGORY_BRANDS: Record<Exclude<Category, "All">, string[]> = {
   Omelette: [],
   Burger: [],
 };
+// Matches the Google Images search terms requested for each category, e.g.
+// "Bingo chips product", "KitKat chocolate product", "Coca Cola product".
 const CATEGORY_IMAGE_HINT: Record<Exclude<Category, "All">, string> = {
   Chips: "chips",
   "Cup Noodles": "cup noodles",
@@ -145,6 +150,8 @@ const CATEGORY_IMAGE_HINT: Record<Exclude<Category, "All">, string> = {
   Burger: "burger",
 };
 function pexels(id: number) { return `https://images.pexels.com/photos/${id}/pexels-photo-${id}.jpeg?auto=compress&cs=tinysrgb&w=400&h=400&fit=crop`; }
+// Real product/food photography for each category card (Pexels — free for
+// commercial use, no attribution required).
 const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
   Chips: "/categories/chips.jpg",
   "Cup Noodles": "/categories/cup-noodles.jpg",
@@ -160,11 +167,24 @@ const CATEGORY_IMAGE: Record<Exclude<Category, "All">, string> = {
   Omelette: "/categories/omelette.jpg",
   Burger: "/categories/burger.jpg",
 };
+// Starting fresh with the new category set — no pre-seeded items. The real
+// menu is loaded from Supabase; this only matters as the initial state
+// before that load completes, or as an offline fallback if Supabase isn't
+// configured at all.
 const defaultMenu: MenuItem[] = [];
+// Only the empty current shift is seeded. Orders and completed history are loaded from the backend/local session state.
 const defaultShifts: Shift[] = [
   { id: "shift-current", openedAt: new Date().toISOString(), orderCount: 0, online: 0, cod: 0, total: 0, pending: 0 },
 ];
 function read<T>(key: string, fallback: T): T { try { const value = window.localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; } }
+// localStorage has a small (~5-10MB, sometimes less in Safari/private
+// browsing) quota shared by the whole site. A handful of embedded photos
+// can blow past that instantly, and a plain localStorage.setItem() throws
+// an uncaught QuotaExceededError in that case — which used to crash the
+// entire app to a blank screen a moment after load. This never rethrows:
+// on any storage error (quota exceeded, private browsing, storage
+// disabled, etc.) the app simply continues running off in-memory state +
+// Supabase, without the local cache updating.
 function safeLocalStorageSet(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
@@ -172,9 +192,15 @@ function safeLocalStorageSet(key: string, value: string) {
     // Intentionally swallowed — see comment above.
   }
 }
+// Legacy/offline-fallback local caches should never hold embedded image
+// data (data: URIs) — real images belong in Supabase Storage, not
+// localStorage. Strips any that slip through (e.g. from an old upload,
+// or an offline-mode preview) before the cache is written.
 function withoutHeavyImages(items: MenuItem[]): MenuItem[] {
   return items.map((item) => (item.imageUrl && item.imageUrl.startsWith("data:")) ? { ...item, imageUrl: undefined } : item);
 }
+// Cart rows also carry a full MenuItem (including whatever imageUrl it has),
+// so they need the same stripping as the menu cache above.
 function withoutHeavyImagesInCart(cartByAccount: Record<string, { item: MenuItem; quantity: number }[]>): Record<string, { item: MenuItem; quantity: number }[]> {
   const result: Record<string, { item: MenuItem; quantity: number }[]> = {};
   for (const [key, rows] of Object.entries(cartByAccount)) {
@@ -185,8 +211,14 @@ function withoutHeavyImagesInCart(cartByAccount: Record<string, { item: MenuItem
 function withoutHeavyQr(settings: PaymentSettings): PaymentSettings {
   return (settings.qrCode && settings.qrCode.startsWith("data:")) ? { ...settings, qrCode: null } : settings;
 }
+// Uploads a picked file to the public coke-station-images Storage bucket and
+// returns its public URL — used for both product photos and the payment QR
+// code, so neither ever gets embedded as a giant base64 string in the
+// database or (via the app's local cache) in localStorage.
 async function uploadToImageStore(file: File, folder: string): Promise<string> {
   if (!supabase) {
+    // Offline/no-Supabase preview only: fall back to an in-memory-only data
+    // URL. withoutHeavyImages/withoutHeavyQr keep this out of localStorage.
     return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Could not read file"));
@@ -199,6 +231,10 @@ async function uploadToImageStore(file: File, folder: string): Promise<string> {
   }
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = `${folder}/${Date.now()}-${safeName}`;
+  // Uploading the raw File object directly can fail with a "No content
+  // provided" error in some browsers (Safari in particular) — reading it
+  // into an ArrayBuffer first and uploading that, with an explicit
+  // contentType, avoids the issue.
   const bytes = await file.arrayBuffer();
   const { error } = await supabase.storage.from("coke-station-images").upload(path, bytes, { upsert: true, contentType: file.type || "image/jpeg" });
   if (error) throw error;
@@ -206,6 +242,11 @@ async function uploadToImageStore(file: File, folder: string): Promise<string> {
   return data.publicUrl;
 }
 function money(value: number) { return `₹${value.toLocaleString("en-IN")}`; }
+// Stored phone numbers can show up as a bare 10-digit number, or with a "91"
+// country-code prefix but no "+" (e.g. "917200874720") — dialers reject that
+// second form as an invalid number since it's neither a valid local number
+// nor a properly-formed international one. Always rebuild a clean +91
+// E.164 number from just the digits, regardless of how it was stored.
 function telHref(phone: string) {
   const digits = phone.replace(/\D/g, "");
   return `tel:+91${digits.slice(-10)}`;
@@ -315,8 +356,7 @@ function Login({ owner, register, onBack, onSuccess, onRegister, onStudentAuth, 
 }
 function StudentHeader({ onHistory, onLogout, onCart, onProfile, studentName, cartCount, cartTotal, theme, onToggleTheme }: { onHistory: () => void; onLogout: () => void; onCart: () => void; onProfile: () => void; studentName: string; cartCount: number; cartTotal: number; theme: "dark" | "light"; onToggleTheme: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
-  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>ℹ️ About Us</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div>{aboutOpen && <Modal title="ℹ️ About Us" onClose={() => setAboutOpen(false)}><div className="profile-view"><div className="profile-detail-card"><strong style={{ fontSize: "18px" }}>SJ FOODS</strong></div></div></Modal>}</header>;
+  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div></header>;
 }
 
 function StudentStatusNotification({ notification, onClose }: { notification: StudentNotification | null; onClose: () => void }) {
@@ -452,6 +492,9 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   const [passwordOpen, setPasswordOpen] = useState(false);
   const query = search.trim().toLowerCase();
   const shown = menu.filter((item) => (category === "All" || item.category === category) && (!query || item.name.toLowerCase().includes(query)));
+  // Group by brand only when a specific branded category is selected and
+  // the student isn't searching — "All" and brandless categories (Cup
+  // Noodles/Biscuits/Cakes) stay a flat list, matching the existing layout.
   const activeBrands = category !== "All" ? CATEGORY_BRANDS[category] : [];
   const groupByBrand = activeBrands.length > 0 && !query;
   const brandGroups = groupByBrand ? [...activeBrands, ""].map((brand) => ({ brand, items: shown.filter((item) => (item.brand || "") === brand) })).filter((group) => group.items.length > 0) : [];
@@ -461,8 +504,8 @@ function StudentMenu({ menu, cart, shopOpen, profile, notification, onDismissNot
   return <div className="student-page"><StudentHeader onHistory={onHistory} onLogout={onLogout} onCart={() => setCartOpen(true)} onProfile={() => setProfileOpen(true)} studentName={profile.name} cartCount={cart.reduce((sum, row) => sum + row.quantity, 0)} cartTotal={cartTotal} theme={theme} onToggleTheme={onToggleTheme} /><StudentStatusNotification notification={notification} onClose={onDismissNotification} /><StudentHostelPicker value={hostel} onChange={setHostel} /><section className="student-hero"><span className="live-label">● LIVE · Hostel Night Canteen</span><h1>Late night hunger?<br /><em>We've got you covered.</em></h1><p>Chips, cup noodles, chocolates, cold drinks — straight to your hostel.</p></section><div className="student-search-bar"><Icon name="search" size={15} /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search food items..." aria-label="Search food items" />{search && <button type="button" className="student-search-clear" onClick={() => setSearch("")} aria-label="Clear search">×</button>}</div><main className="student-menu-area">{category === "All" && !query ? <div className="category-card-grid">{categories.filter((item) => item.name !== "All").map((item) => <button type="button" className="category-card" key={item.name} onClick={() => setCategory(item.name)}><span className="category-card-image"><img src={CATEGORY_IMAGE[item.name as Exclude<Category, "All">]} alt={item.name} loading="lazy" /></span><span className="category-card-name">{item.name}</span></button>)}</div> : <>{category !== "All" && <div className="category-detail-heading"><button type="button" className="back-to-categories" onClick={() => { setCategory("All"); setSearch(""); }}>← Back to Categories</button><h2>{category}</h2></div>}{groupByBrand ? brandGroups.map((group) => <div className="brand-group" key={group.brand || "other"}><h3 className="brand-group-title">{group.brand || "Other"}</h3><div className="student-products">{group.items.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div></div>) : <div className="student-products">{shown.map((item) => <StudentProduct key={item.id} product={item} quantity={cart.find((row) => row.item.id === item.id)?.quantity || 0} onAdd={onAdd} onQuantity={onQuantity} />)}</div>}{!shown.length && <div className="center-empty">{query ? "No food items found" : "No items in this category."}</div>}</>}</main>{cartOpen && <CartModal cart={cart} onQuantity={onQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); onCheckout(hostel); }} />}{profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} onChangePassword={() => { setProfileOpen(false); setPasswordOpen(true); }} />}{passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} onUpdate={onUpdatePassword} />}{cart.length > 0 && !cartOpen && <button className="mobile-cart-bar" onClick={() => cartTotal >= MINIMUM_ORDER ? onCheckout(hostel) : setCartOpen(true)}><span>{cartCount} {cartCount === 1 ? "item" : "items"} in cart</span><strong>{money(cartTotal)} <span aria-hidden="true">→</span></strong></button>}</div>;
 }
 
-type CheckoutStep = "form" | "processing";
-function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace, onPayOnline }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void>; onPayOnline: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
+type CheckoutStep = "form" | "redirecting" | "confirm" | "payment-return";
+function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPlace }: { cart: { item: MenuItem; quantity: number }[]; profile: StudentProfile; upiId: string; initialHostel?: string; onClose: () => void; onPlace: (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => void | Promise<void> }) {
   const [hostel, setHostel] = useState(initialHostel);
   const [payment, setPayment] = useState<PaymentMethod>("COD");
   const [upiApp, setUpiApp] = useState<UpiApp>("Google Pay");
@@ -471,6 +514,47 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
   const [step, setStep] = useState<CheckoutStep>("form");
   const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   const apps: { name: UpiApp; icon: string }[] = [{ name: "Google Pay", icon: "G" }, { name: "PhonePe", icon: "पे" }, { name: "Paytm", icon: "P" }, { name: "Other apps", icon: "•••" }];
+  // Auto-advances to the confirm step when the browser reliably reports the
+  // tab losing and regaining visibility around the redirect — this works
+  // well in a normal mobile browser tab. It's a nicety, not the only way
+  // forward: the manual "I'm back" button below always works too, since
+  // some embedded browsers (e.g. WhatsApp's in-app browser) don't fire
+  // visibilitychange reliably when handing off to an external app, even
+  // though the app opens successfully.
+  const leftForPaymentRef = useRef(false);
+  useEffect(() => {
+    if (step !== "redirecting") return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") { leftForPaymentRef.current = true; return; }
+      if (leftForPaymentRef.current) setStep("confirm");
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [step]);
+  useEffect(() => {
+    if (step !== "payment-return") return;
+    let cancelled = false;
+    const finish = async () => {
+      // IMPORTANT: reaching this step means the student explicitly told us
+      // ("Yes, I paid") they completed the payment in their UPI app — it is
+      // still NOT proof the payment actually succeeded, since there is no
+      // payment gateway/provider here to verify it against. The order is
+      // created with paymentStatus "Pending" and still needs a real human
+      // to confirm it, exactly like the existing delivery-time "Confirm
+      // Payment Received" QR flow. If a trusted payment-status API is ever
+      // added, this is the single place to add a real server-verified
+      // check before calling onPlace.
+      setPlacing(true);
+      try {
+        await onPlace({ hostel, phone: profile.phone, payment: "UPI", upiApp });
+      } catch (caught) {
+        if (!cancelled) { setError(caught instanceof Error ? caught.message : "The order could not be placed. Please try again."); setStep("form"); }
+      } finally { if (!cancelled) setPlacing(false); }
+    };
+    void finish();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
@@ -481,27 +565,43 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
       finally { setPlacing(false); }
       return;
     }
-    // UPI: create the order (Pending) then hand off to Cashfree's real
-    // checkout — Cashfree tells us for real whether it succeeded via
-    // webhook, instead of asking the student to self-report.
-    setPlacing(true);
-    setStep("processing");
-    try {
-      await onPayOnline({ hostel, phone: profile.phone, payment: "UPI", upiApp });
-      // On success the browser navigates away to Cashfree's checkout page,
-      // so nothing after this line normally runs.
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not start online payment. Please try again.");
-      setStep("form");
-      setPlacing(false);
-    }
+    // UPI: launch the chosen app with the exact order amount pre-filled via
+    // the standard upi://pay deep link — no gateway/provider involved, the
+    // student never has to type the amount themselves.
+    leftForPaymentRef.current = false;
+    setStep("redirecting");
+    window.location.href = buildUpiUri(upiId, total);
   };
-  if (step === "processing") {
-    return <Modal title="Taking you to secure checkout…" subtitle="Please don't close this tab." onClose={onClose}>
-      <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Preparing your <b>{money(total)}</b> payment via Cashfree.</p></div>
+  if (step === "redirecting") {
+    const uri = buildUpiUri(upiId, total);
+    return <Modal title={`Opening ${upiApp}…`} subtitle="Complete the payment there, then come back to this tab." onClose={onClose}>
+      <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Pay <b>{money(total)}</b> to <b>{upiId}</b> in {upiApp}.</p><p className="upi-redirect-hint">Didn't open automatically? <a href={uri}>Tap here to open {upiApp}</a>.</p><PrimaryButton type="button" className="full-width upi-manual-continue" onClick={() => setStep("confirm")}>I'm back — continue <Icon name="arrow" size={16} /></PrimaryButton><button type="button" className="flow-back" onClick={() => setStep("form")}>← Choose a different payment method</button></div>
     </Modal>;
   }
-  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">You'll be taken to a secure Cashfree checkout for <b>{money(total)}</b>.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : payment === "UPI" ? `Pay ${money(total)} online` : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
+  if (step === "confirm") {
+    // We genuinely cannot tell, from this web app, whether the student
+    // completed or cancelled the payment in their UPI app — there's no
+    // payment gateway/provider here to check against (see the DISMISS
+    // button case: GPay can be closed without paying, and returning to
+    // this tab looks identical either way). So we ask directly, and a
+    // cancelled payment never creates an order at all.
+    return <Modal title="Did the payment go through?" subtitle={`You were sent to ${upiApp} to pay ${money(total)}.`} onClose={onClose}>
+      <div className="upi-confirm-content">
+        <p>Only place this order if the payment in {upiApp} actually completed. If you backed out or cancelled, choose "No" — no order will be created and nothing will be charged.</p>
+        {error && <p className="checkout-error">{error}</p>}
+        <div className="upi-confirm-actions">
+          <button type="button" className="upi-confirm-no" disabled={placing} onClick={() => { setStep("form"); setPayment("COD"); }}>✕ No, I cancelled</button>
+          <PrimaryButton type="button" className="upi-confirm-yes" disabled={placing} onClick={() => setStep("payment-return")}>{placing ? "Placing order…" : "✓ Yes, I paid"}</PrimaryButton>
+        </div>
+      </div>
+    </Modal>;
+  }
+  if (step === "payment-return") {
+    return <Modal title="✅ Payment Successful" subtitle="Placing your order…" onClose={onClose}>
+      <div className="order-placed-content"><div className="order-placed-icon"><Icon name="check" size={30} /></div><span className="order-placed-kicker">WELCOME BACK</span><h3>Thanks for paying via {upiApp}</h3><p>We're placing your order now. The shop owner will confirm your payment when preparing or delivering it.</p></div>
+    </Modal>;
+  }
+  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">Pay to <b>{upiId}</b> · {upiApp} will open with <b>{money(total)}</b> already filled in.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : payment === "UPI" ? `Pay with ${upiApp}` : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
 }
 function OrderPlacedModal({ order, onClose }: { order: Order; onClose: () => void }) {
   return <Modal title="✅ Order placed" subtitle="Your order has been sent to the shop owner." onClose={onClose}>
@@ -591,6 +691,11 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onUpdate, onDelete, onU
   };
   const setCategory = (next: Exclude<Category, "All">) => setForm({ ...form, category: next, brand: CATEGORY_BRANDS[next][0] || "" });
   const googleImagesQuery = (name: string, category: Exclude<Category, "All">) => { const hint = CATEGORY_IMAGE_HINT[category]; return hint ? `${name.trim()} ${hint} product` : `${name.trim()} product`; };
+  // Opens a Google Images search for the typed product name in a new tab.
+  // Browsers don't allow a webpage to automatically read back an image the
+  // owner picks on another site, so the owner finds the image there, saves
+  // or copies its link, then attaches it below (upload or paste URL) —
+  // this is the closest reliable workflow given that restriction.
   const searchGoogleImages = () => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(googleImagesQuery(form.name, form.category))}`, "_blank", "noopener,noreferrer");
   const [uploadingImage, setUploadingImage] = useState(false);
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -622,6 +727,10 @@ function MenuListModal({ menu, onClose, onToggle, onAdd, onUpdate, onDelete, onU
   };
   const query = search.trim().toLowerCase();
   const filteredMenu = query ? menu.filter((item) => item.name.toLowerCase().includes(query)) : menu;
+  // Search bypasses category grouping entirely (matching the student-side
+  // menu) since a flat filtered list is what's useful when searching. With
+  // no search active, group into the 13 categories, collapsible, so the
+  // owner isn't scrolling a single list of 100+ items to find one.
   const groupedByCategory = query ? [] : categories.filter((entry) => entry.name !== "All").map((entry) => ({ category: entry.name as Exclude<Category, "All">, items: menu.filter((item) => item.category === entry.name) })).filter((group) => group.items.length > 0);
   const toggleExpanded = (category: Exclude<Category, "All">) => setExpanded((current) => { const next = new Set(current); if (next.has(category)) next.delete(category); else next.add(category); return next; });
   const renderRow = (item: MenuItem) => <div className={`owner-menu-modal-row ${!item.available ? "row-out" : ""}`} key={item.id}><button type="button" className="owner-item-thumb" onClick={() => { setImageEditTarget(item); setImageEditUrlInput(""); }} aria-label={item.imageUrl ? `Change photo for ${item.name}` : `Add photo for ${item.name}`}>{item.imageUrl ? <img src={item.imageUrl} alt={item.name} /> : <Icon name="image" size={18} />}{!item.imageUrl && <span className="thumb-add-badge">+</span>}</button><div><b>{item.name}</b><small>{item.category}{item.brand ? ` · ${item.brand}` : ""} · {item.size} · {money(item.price)}</small></div><button className={`availability-pill ${item.available ? "available" : "out"}`} onClick={() => onToggle(item.id)}>{item.available ? "✓ Available" : "× Out of Stock"}</button><button className="edit-food-button" onClick={() => startEdit(item)} aria-label={`Edit ${item.name}`}><Icon name="edit" size={15} /></button><button className="delete-food-button" onClick={() => setDeleteTarget(item)} aria-label={`Delete ${item.name}`}><Icon name="trash" size={15} /></button></div>;
@@ -721,6 +830,9 @@ function PaymentModal({ settings, onClose, onSave }: { settings: PaymentSettings
   return <Modal title="💳 Online Payment Update" subtitle="UPI ID and QR code used for delivery-time payments" onClose={onClose}><div className="payment-tabs"><button type="button" className={tab === "upi" ? "active blue" : ""} onClick={() => setTab("upi")}>🧾 UPI Update</button><button type="button" className={tab === "qr" ? "active green" : ""} onClick={() => setTab("qr")}>🖼️ QR Code Update</button></div>{tab === "upi" ? <div className="payment-update-form"><label><span>FOOD STALL UPI ID</span><input value={upi} onChange={(event) => setUpi(event.target.value)} placeholder="stall@upi" autoComplete="off" /></label><p>This UPI ID is shown to the student when they pay online.</p><button className="blue-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ UPI ID Saved" : "💾 Save UPI ID"}</button>{error && <p className="payment-error">{error}</p>}</div> : <div className="qr-update-form"><span className="qr-label">FOOD STALL UPI QR CODE</span><div className="qr-preview">{qrCode ? <img className="uploaded-qr" src={qrCode} alt="Uploaded food stall UPI QR code" /> : <FakeQR />}<small>{qrCode ? "✓ Current QR code preview" : "No QR code uploaded yet"}</small></div><label className={`replace-qr ${uploadingQr ? "disabled" : ""}`}>{uploadingQr ? "Uploading…" : `🔄 ${qrCode ? "Replace QR Code" : "Upload QR Code"}`}<input type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadQr} disabled={uploadingQr} /></label>{qrCode && <button className="remove-qr" type="button" onClick={() => setQrCode(null)}>Remove QR code</button>}<button className="green-save-button" type="button" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ QR Code Saved" : "💾 Save QR Code"}</button>{error && <p className="payment-error">{error}</p>}</div>}</Modal>;
 }
 function FakeQR() { const bits = [1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,0,1,1,1,1,0,1,0,1,1,0,0,0,1,1,0,1,0,1,1,1,0,0,1,0,1,1,0,1,1,0,1,0,0,1,1,0,1,1,0,0,1,0,1,1,1,0,1,0,0,1,1,0,1,0,1,1,0,0,1,1,0,1,1,0]; return <div className="fake-qr-grid">{bits.map((bit, i) => <i className={bit ? "on" : ""} key={i} />)}</div>; }
+// Builds a standard UPI deep-link URI with the exact order amount baked in, so
+// scanning it pre-fills the amount — no payment gateway/provider is involved,
+// this is just the plain UPI URI scheme every UPI app already understands.
 function buildUpiUri(upiId: string, amount: number) {
   return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(SHOP_NAME)}&am=${amount.toFixed(2)}&cu=INR`;
 }
@@ -742,6 +854,9 @@ function ConfirmModal({ kind, shopOpen = true, itemName, onClose, onConfirm }: {
 }
 
 type ShopSession = { id: string; openedAt: string; closedAt: string | null };
+// Every count for a session is derived live from the real orders list — never
+// stored as a separate counter — so it can't drift out of sync the way the
+// old locally-cached shift.orderCount fields could.
 function computeSessionStats(session: { openedAt: string; closedAt: string | null }, orders: Order[]) {
   const start = new Date(session.openedAt).getTime();
   const end = session.closedAt ? new Date(session.closedAt).getTime() : Infinity;
@@ -754,6 +869,9 @@ function computeSessionStats(session: { openedAt: string; closedAt: string | nul
 }
 type HistoryExportRow = { session: string; opened: string; closed: string; orders: number; online: number; cod: number; total: number; pending: number };
 type HistorySummary = { allOrders: number; onlineReceived: number; codReceived: number; grandTotal: number };
+// jsPDF's built-in fonts don't include the ₹ glyph (it renders as a blank
+// box), so the PDF export writes "Rs." instead. The on-screen UI and the
+// Excel export both keep using money()/₹ as before.
 function moneyForPdf(value: number) { return `Rs. ${value.toLocaleString("en-IN")}`; }
 async function downloadHistoryPdf(summary: HistorySummary, rows: HistoryExportRow[]) {
   const [{ default: jsPDF }, autoTableModule] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
@@ -819,6 +937,11 @@ function HistoryDownloadButtons({ summary, rows }: { summary: HistorySummary; ro
   return <div className="history-download-group"><button type="button" className="history-download-button pdf" disabled={busy !== null} onClick={() => runExport("pdf")} title="Download PDF" aria-label="Download PDF">{busy === "pdf" ? "…" : "DP"}</button><button type="button" className="history-download-button xlsx" disabled={busy !== null} onClick={() => runExport("xlsx")} title="Download Excel" aria-label="Download Excel">{busy === "xlsx" ? "…" : "DX"}</button></div>;
 }
 function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt, onClose, onDelete }: { orders: Order[]; ownerPin: string; shifts: Shift[]; shopOpen: boolean; shiftStartedAt: string; onClose: () => void; onDelete: (id: string) => void }) {
+  // Session open/close boundaries are the shared source of truth in Supabase
+  // (owner_list_coke_shop_sessions) — every order count below is computed
+  // live from the real orders list against those boundaries. This avoids the
+  // old bug where locally-cached, per-device shift counters could go out of
+  // sync with — or duplicate — the real order data.
   const [sessions, setSessions] = useState<ShopSession[] | null>(supabase ? null : []);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
@@ -848,6 +971,11 @@ function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt,
   const completedSessionStats = completedSessions.map((session) => ({ session, stats: computeSessionStats(session, orders) }));
   const legacyCompletedShifts = usingSyncedSessions ? [] : shifts.filter((shift) => shift.closedAt);
   const legacyLiveOrders = !usingSyncedSessions && shopOpen ? orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime()) : [];
+  // The totals below mirror exactly what's still visible in the list further
+  // down — summed from the same live-computed session stats (or, offline,
+  // the same cached legacy shift totals) rather than the full order list.
+  // That way clearing a history record with × immediately reduces these
+  // totals too, instead of them always reflecting every order ever placed.
   const all = usingSyncedSessions
     ? (liveStats ? liveStats.orderCount : 0) + completedSessionStats.reduce((sum, entry) => sum + entry.stats.orderCount, 0)
     : legacyLiveOrders.length + legacyCompletedShifts.reduce((sum, shift) => sum + shift.orderCount, 0);
@@ -857,6 +985,8 @@ function SalesHistoryModal({ orders, ownerPin, shifts, shopOpen, shiftStartedAt,
   const cod = usingSyncedSessions
     ? (liveStats ? liveStats.cod : 0) + completedSessionStats.reduce((sum, entry) => sum + entry.stats.cod, 0)
     : legacyLiveOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0) + legacyCompletedShifts.reduce((sum, shift) => sum + shift.cod, 0);
+  // Mirrors exactly what's rendered below, in the same order, so the PDF/Excel
+  // downloads can never contain anything not currently shown in History.
   const historyRows: HistoryExportRow[] = usingSyncedSessions
     ? [
         ...(shopOpen && currentSession && liveStats ? [{ session: "Current Open Session", opened: `${shortDate(currentSession.openedAt)} · ${clock(currentSession.openedAt)}`, closed: "Running (shop still open)", orders: liveStats.orderCount, online: liveStats.online, cod: liveStats.cod, total: liveStats.total, pending: liveStats.pending }] : []),
@@ -919,6 +1049,7 @@ export default function App() {
   useEffect(() => { safeLocalStorageSet("legacy-coke-shifts", JSON.stringify(shifts)); }, [shifts]);
   useEffect(() => { safeLocalStorageSet("legacy-coke-shop", JSON.stringify(shopOpen)); }, [shopOpen]);
   useEffect(() => { safeLocalStorageSet("legacy-coke-payment-settings", JSON.stringify(withoutHeavyQr(paymentSettings))); }, [paymentSettings]);
+  // Load the current owner payment settings when the owner signs in.
   useEffect(() => {
     const client = supabase;
     if (!client || !ownerPin) return;
@@ -929,6 +1060,7 @@ export default function App() {
     };
     void loadPaymentSettings();
   }, [ownerPin]);
+  // Students always receive the latest public UPI destination, without receiving the QR code.
   useEffect(() => {
     const client = supabase;
     if (!client) return;
@@ -938,18 +1070,11 @@ export default function App() {
       if (!cancelled && typeof data === "string" && data.trim()) setPaymentSettings((current) => ({ ...current, upiId: data.trim() }));
     };
     void loadStudentUpi();
-    // Realtime replaces constant polling: we only re-check the UPI id when
-    // the owner's payment settings row actually changes, instead of every
-    // few seconds regardless. A slow safety-net poll stays underneath in
-    // case a Realtime connection drops silently (rare, but bandwidth-cheap
-    // to guard against at 45s instead of 3s).
-    const channel = client
-      .channel("coke-shop-payment-settings-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "coke_shop_payment_settings" }, () => { void loadStudentUpi(); })
-      .subscribe();
-    const safetyNetTimer = window.setInterval(() => { void loadStudentUpi(); }, 45000);
-    return () => { cancelled = true; window.clearInterval(safetyNetTimer); void client.removeChannel(channel); };
+    const timer = window.setInterval(() => { void loadStudentUpi(); }, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
+  // Shop status is shared through Supabase when the status migration is installed;
+  // localStorage remains a fallback for the offline/reference preview.
   useEffect(() => {
     const client = supabase;
     if (!client) return;
@@ -962,24 +1087,24 @@ export default function App() {
       }
     };
     void loadShopStatus();
-    const channel = client
-      .channel("coke-shop-status-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "coke_shop_status" }, () => { void loadShopStatus(); })
-      .subscribe();
-    const safetyNetTimer = window.setInterval(() => { void loadShopStatus(); }, 45000);
-    return () => { cancelled = true; window.clearInterval(safetyNetTimer); void client.removeChannel(channel); };
+    const timer = window.setInterval(() => { void loadShopStatus(); }, 2500);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
+  // Save the active account's basket under its own key. This prevents one student's
+  // basket from appearing when another student logs in on the same browser.
   useEffect(() => {
     const key = activeAccountKey.current;
     setCartByAccount((current) => ({ ...current, [key]: cart }));
   }, [cart]);
   useEffect(() => { safeLocalStorageSet("legacy-coke-carts", JSON.stringify(withoutHeavyImagesInCart(cartByAccount))); }, [cartByAccount]);
+  // Load the next student's basket whenever the authenticated account changes.
   useEffect(() => {
     activeAccountKey.current = accountKey;
     setCart(cartByAccount[accountKey] || []);
   }, [accountKey]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2800); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { if (!studentNotification) return; const timer = window.setTimeout(() => setStudentNotification(null), 5600); return () => window.clearTimeout(timer); }, [studentNotification?.id]);
+  // Menu is shared through Supabase; localStorage is only a fallback until the migration is run.
   useEffect(() => {
     const client = supabase;
     if (!client) return;
@@ -993,13 +1118,10 @@ export default function App() {
       if (!cancelled && !result.error && result.data) setMenu((result.data as Record<string, unknown>[]).map(menuItemFromDatabase));
     };
     void loadMenu();
-    const channel = client
-      .channel("coke-station-menu-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "coke_station_menu" }, () => { void loadMenu(); })
-      .subscribe();
-    const safetyNetTimer = window.setInterval(() => { void loadMenu(); }, 45000);
-    return () => { cancelled = true; window.clearInterval(safetyNetTimer); void client.removeChannel(channel); };
+    const timer = window.setInterval(() => { void loadMenu(); }, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [screen, ownerPin, profile.id]);
+  // An item marked out of stock on the owner's device is removed from any open student cart.
   useEffect(() => {
     setCart((current) => current.filter((row) => {
       const latest = menu.find((item) => item.id === row.item.id);
@@ -1032,11 +1154,13 @@ export default function App() {
       const next: StudentProfile = {
         id: user.id,
         name: row?.full_name?.trim() || fallback.name,
+        // The source of truth is Auth's phone number when the profile row is old.
         phone: user.phone || row?.phone || fallback.phone,
         hostel: row?.default_hostel && hostels.some((hostel) => hostel.name === row.default_hostel) ? row.default_hostel : fallback.hostel,
         room: row?.room || fallback.room,
       };
       setProfile(next);
+      // This repairs accounts created before the profile table/trigger existed.
       const repair = await supabase.from("coke_student_profiles").upsert({
         id: user.id,
         full_name: next.name,
@@ -1046,6 +1170,7 @@ export default function App() {
       }, { onConflict: "id" });
       if (repair.error && !["42P01", "PGRST205"].includes(repair.error.code || "")) console.warn("Could not repair student profile", repair.error.message);
     } catch (caught) {
+      // Profile details should still render from Auth if the optional table is not installed yet.
       setProfile(fallback);
       console.warn("Could not load Coke Station profile", caught);
     }
@@ -1074,6 +1199,7 @@ export default function App() {
         setProfile(emptyProfile);
         setScreen("landing");
       } else if (session) {
+        // Supabase recommends deferring follow-up queries from this callback.
         window.setTimeout(() => { if (!cancelled) void hydrateProfile(session); }, 0);
         setScreen("student-menu");
       }
@@ -1081,28 +1207,12 @@ export default function App() {
     return () => { cancelled = true; authListener.subscription.unsubscribe(); };
   }, []);
 
-  // Handle the browser returning from Cashfree's hosted checkout page. We
-  // set ?cf_order_ref=<our order id> in the Edge Function's return_url, so
-  // if it's present the student just came back from a real payment
-  // attempt. We never trust this on its own to mark anything as paid —
-  // that only ever happens via the Cashfree webhook writing straight to
-  // the database — this is purely a "welcome back, checking your order"
-  // UI touch, and the URL is cleaned up immediately so a refresh/share
-  // can't replay it.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const returnedOrderRef = params.get("cf_order_ref");
-    if (!returnedOrderRef) return;
-    window.history.replaceState({}, "", window.location.pathname);
-    notify("Payment received — confirming your order…");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleStudentAuth = async (input: StudentAuthInput) => {
     const phone = normalizeIndianPhone(input.phone);
     if (!/^\+91\d{10}$/.test(phone)) throw new Error("Enter a valid 10-digit Indian mobile number.");
     if (!supabaseConfigured || !supabase) {
       if (isHostedEnvironment()) throw new Error("Cloud backend is not configured on this deployment. Add VITE_SUPABASE_ANON_KEY in Netlify and redeploy.");
+      // Keeps the reference UI usable locally until the public anon key is added.
       setProfile({ ...emptyProfile, name: input.name || "Vishwa S", phone });
       setScreen("student-menu");
       notify("Demo account loaded — connect Supabase for saved accounts");
@@ -1209,6 +1319,9 @@ export default function App() {
     if (error || data === false) { setMenu(previous); notify(error?.message || "Menu item was not saved"); return; }
     notify(`${item.name} added`);
   };
+  // Saves edits (name/description/category/brand/size/price/image) to an
+  // existing item — same upsert RPC as addMenuItem, but replaces the item
+  // in place instead of appending, and keeps its current available status.
   const updateMenuItem = async (item: MenuItem) => {
     const previous = menu;
     setMenu((current) => current.map((entry) => entry.id === item.id ? item : entry));
@@ -1219,6 +1332,10 @@ export default function App() {
     if (error || data === false) { setMenu(previous); notify(error?.message || "Menu item was not updated"); return; }
     notify(`${item.name} updated`);
   };
+  // Attaches/changes just the photo on an existing item, without touching
+  // its name/price/category/etc — used by the "+" on a menu row that has
+  // no photo yet, so the owner doesn't need to re-open the full Add Item
+  // form to fix a single missing image.
   const updateMenuItemImage = async (id: string, imageUrl: string) => {
     const previous = menu;
     const item = menu.find((entry) => entry.id === id);
@@ -1231,6 +1348,10 @@ export default function App() {
     if (error || data === false) { setMenu(previous); notify(error?.message || "Photo was not saved"); return; }
     notify(`${item.name} photo updated`);
   };
+  // Permanently removes a food item from the active menu. Past orders keep
+  // their own snapshot of the item's name/price/quantity (orders.items is a
+  // plain JSON copy taken at order time, not a live reference to the menu
+  // row), so deleting a menu item here never touches order history.
   const deleteMenuItem = async (id: string) => {
     const previous = menu;
     const item = menu.find((entry) => entry.id === id);
@@ -1243,71 +1364,35 @@ export default function App() {
     notify(item ? `${item.name} deleted` : "Item deleted");
   };
   const changeQuantity = (id: string, delta: number) => setCart((current) => current.map((row) => row.item.id === id ? { ...row, quantity: row.quantity + delta } : row).filter((row) => row.quantity > 0));
-
-  // Inserts the order row itself and returns the saved order. No other
-  // side effects (cart clearing, modal closing, notifications) live here —
-  // callers decide what happens next, since the COD flow and the Cashfree
-  // flow need different things to happen immediately afterward.
-  const insertOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }): Promise<Order> => {
+  const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
     const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
     if (total < MINIMUM_ORDER) throw new Error(`Minimum order is ${money(MINIMUM_ORDER)}. Add items worth ${money(MINIMUM_ORDER - total)} more.`);
     const order: Order = { id: `CS-${Date.now().toString().slice(-6)}`, createdAt: new Date().toISOString(), studentId: profile.id, student: profile.name, phone: profile.phone || details.phone, hostel: details.hostel, items: cart.map((row) => ({ name: row.item.name, quantity: row.quantity })), total, payment: details.payment, upiApp: details.upiApp, paymentStatus: "Pending", status: "New" };
     if (isHostedEnvironment() && (!supabase || !supabaseConfigured)) throw new Error("Cloud backend is not configured. Ask the owner to add the Supabase environment variables in Netlify.");
-    if (!supabase || !supabaseConfigured) return order;
-    if (!profile.id) throw new Error("Your session expired. Please log in again.");
-    const { data, error } = await supabase.from("coke_station_orders").insert({
-      order_ref: order.id,
-      student_id: profile.id,
-      student_name: order.student,
-      student_phone: order.phone,
-      hostel: order.hostel,
-      items: order.items,
-      total: order.total,
-      payment_method: order.payment,
-      upi_app: order.upiApp || null,
-      payment_status: order.paymentStatus,
-      status: order.status,
-    }).select("*").single();
-    if (error) throw new Error(error.code === "42P01" || error.code === "PGRST205" ? "Orders backend is not installed yet. Run supabase/ORDERS_BACKEND.sql." : error.message);
-    return data && typeof data === "object" ? orderFromDatabase(data as Record<string, unknown>) : order;
-  };
-
-  const placeOrder = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
-    const savedOrder = await insertOrder(details);
+    let savedOrder = order;
+    if (supabase && supabaseConfigured) {
+      if (!profile.id) throw new Error("Your session expired. Please log in again.");
+      const { data, error } = await supabase.from("coke_station_orders").insert({
+        order_ref: order.id,
+        student_id: profile.id,
+        student_name: order.student,
+        student_phone: order.phone,
+        hostel: order.hostel,
+        items: order.items,
+        total: order.total,
+        payment_method: order.payment,
+        upi_app: order.upiApp || null,
+        payment_status: order.paymentStatus,
+        status: order.status,
+      }).select("*").single();
+      if (error) throw new Error(error.code === "42P01" || error.code === "PGRST205" ? "Orders backend is not installed yet. Run supabase/ORDERS_BACKEND.sql." : error.message);
+      if (data && typeof data === "object") savedOrder = orderFromDatabase(data as Record<string, unknown>);
+    }
     setOrders((current) => [savedOrder, ...current]);
     setCart([]);
     setCheckoutOpen(false);
     setOrderPlaced(savedOrder);
   };
-
-  // Real Cashfree flow: create the order as Pending, then hand off to
-  // Cashfree's hosted checkout. Cashfree — not the student — is the one
-  // who later tells us (via the cashfree-webhook Edge Function) whether
-  // the payment actually succeeded, which is what keeps payment_status
-  // trustworthy instead of self-reported.
-  const payOnline = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
-    if (!supabase) throw new Error("Cloud backend is not configured. Online payment needs Supabase.");
-    const savedOrder = await insertOrder(details);
-    setOrders((current) => [savedOrder, ...current]);
-    setCart([]);
-    setCheckoutOpen(false);
-    const functionsBase = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
-    if (!functionsBase) throw new Error("VITE_SUPABASE_URL is not set — cannot reach the payment function.");
-    const response = await fetch(`${functionsBase}/functions/v1/create-cashfree-order`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order_ref: savedOrder.id }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.payment_session_id) {
-      throw new Error(payload.error || "Could not start online payment. Please try Cash on Delivery instead.");
-    }
-    const { load: loadCashfree } = await import("@cashfreepayments/cashfree-js");
-    // TODO: switch mode to "production" once you've gone live with Cashfree.
-    const cashfree = await loadCashfree({ mode: "sandbox" });
-    await cashfree.checkout({ paymentSessionId: payload.payment_session_id, redirectTarget: "_self" });
-  };
-
   const scratch = async () => {
     const now = new Date().toISOString();
     if (supabase && ownerPin) {
@@ -1317,6 +1402,7 @@ export default function App() {
       notify("New shift started — current counters reset to zero");
       return;
     }
+    // Offline/local fallback when Supabase isn't configured.
     const previousShiftOrders = orders.filter((order) => new Date(order.createdAt).getTime() >= new Date(shiftStartedAt).getTime() && order.status !== "Cancelled");
     const online = previousShiftOrders.filter((order) => order.payment === "UPI" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
     const cod = previousShiftOrders.filter((order) => order.payment === "COD" && order.paymentStatus === "Paid").reduce((sum, order) => sum + order.total, 0);
@@ -1448,18 +1534,8 @@ export default function App() {
     const loadOrders = screen === "owner-dashboard" && ownerPin ? fetchOwnerOrders : screen === "student-menu" && profile.id ? fetchStudentOrders : null;
     if (!loadOrders) return;
     void loadOrders();
-    // This is the poll that used to run every 2 seconds — by far the
-    // heaviest one, since it's the owner's dashboard and every student's
-    // screen re-fetching every open order constantly. A Realtime
-    // subscription on coke_station_orders means we only re-fetch when a
-    // row actually changes (new order, status update, payment webhook,
-    // etc.), which is what the app is really waiting for.
-    const channel = supabase
-      .channel("coke-station-orders-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "coke_station_orders" }, () => { void loadOrders(); })
-      .subscribe();
-    const safetyNetTimer = window.setInterval(() => { void loadOrders(); }, 45000);
-    return () => { window.clearInterval(safetyNetTimer); void supabase!.removeChannel(channel); };
+    const timer = window.setInterval(() => { void loadOrders(); }, 2000);
+    return () => window.clearInterval(timer);
   }, [screen, ownerPin, profile.id]);
 
   let screenContent: ReactNode;
@@ -1471,5 +1547,5 @@ export default function App() {
   else if (screen === "student-menu") screenContent = <StudentMenu menu={menu} cart={cart} profile={profile} notification={studentNotification} onDismissNotification={() => setStudentNotification(null)} onUpdatePassword={changePassword} shopOpen={shopOpen} onAdd={addToCart} onQuantity={changeQuantity} onHistory={() => setHistoryOpen(true)} onCart={() => setCartOpen(true)} onCheckout={(selectedHostel) => { setCheckoutHostel(selectedHostel || ""); setCheckoutOpen(true); }} onLogout={logout} theme={theme} onToggleTheme={toggleTheme} />;
   else screenContent = <OwnerDashboard menu={menu} orders={orders} shifts={shifts} shopOpen={shopOpen} ownerPin={ownerPin} paymentSettings={paymentSettings} shiftStartedAt={shiftStartedAt} onShop={toggleShop} onScratch={scratch} onMenu={() => undefined} onPayment={() => undefined} onHistory={() => setHistoryOpen(true)} onLogout={logout} onToggle={toggleMenuItem} onAdd={addMenuItem} onUpdateMenuItem={updateMenuItem} onDeleteMenuItem={deleteMenuItem} onUpdateMenuItemImage={updateMenuItemImage} onPaymentSave={savePaymentSettings} onAdvance={nextStatus} onPay={confirmPayment} onReject={rejectOrder} onCompleteDelivery={completeDelivery} onCall={(phone) => notify(`Calling ${phone}`)} onNavigate={(message) => notify(message)} onDeleteShift={deleteShift} theme={theme} onToggleTheme={toggleTheme} />;
 
-  return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} onPayOnline={payOnline} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
+  return <div className="legacy-root">{screenContent}{historyOpen && screen === "student-menu" && <StudentHistory orders={orders} studentId={profile.id} studentPhone={profile.phone} onClose={() => setHistoryOpen(false)} />}{cartOpen && screen === "student-menu" && <CartModal cart={cart} onQuantity={changeQuantity} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckoutOpen(true); }} />}{checkoutOpen && <CheckoutModal cart={cart} profile={profile} upiId={paymentSettings.upiId} initialHostel={checkoutHostel} onClose={() => setCheckoutOpen(false)} onPlace={placeOrder} />}{orderPlaced && <OrderPlacedModal order={orderPlaced} onClose={() => setOrderPlaced(null)} />}{toast && <div className="legacy-toast"><span>✓</span>{toast}</div>}</div>;
 }
