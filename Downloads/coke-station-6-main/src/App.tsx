@@ -316,7 +316,7 @@ function Login({ owner, register, onBack, onSuccess, onRegister, onStudentAuth, 
 function StudentHeader({ onHistory, onLogout, onCart, onProfile, studentName, cartCount, cartTotal, theme, onToggleTheme }: { onHistory: () => void; onLogout: () => void; onCart: () => void; onProfile: () => void; studentName: string; cartCount: number; cartTotal: number; theme: "dark" | "light"; onToggleTheme: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>ℹ️ About Us</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div>{aboutOpen && <Modal title="ℹ️ About Us" onClose={() => setAboutOpen(false)}><div className="profile-view"><div className="profile-detail-card"><strong style={{ fontSize: "18px" }}>SJ FOODS</strong></div></div></Modal>}</header>;
+  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>ℹ️ About Us</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div>{aboutOpen && <Modal title="ℹ️ About Us" onClose={() => setAboutOpen(false)}><div className="profile-view"><div className="profile-detail-card"><strong style={{ fontSize: "18px" }}>SJ FOODS</strong><span>NIT Trichy, Tanjore Main Road, NH67, near BHEL, Tiruchirappalli, Tamil Nadu 620015</span></div></div></Modal>}</header>;
 }
 
 function StudentStatusNotification({ notification, onClose }: { notification: StudentNotification | null; onClose: () => void }) {
@@ -1304,7 +1304,7 @@ export default function App() {
     }
     const { load: loadCashfree } = await import("@cashfreepayments/cashfree-js");
     // TODO: switch mode to "production" once you've gone live with Cashfree.
-    const cashfree = await loadCashfree({ mode: "sandbox" });
+    const cashfree = await loadCashfree({ mode: "production"});
     await cashfree.checkout({ paymentSessionId: payload.payment_session_id, redirectTarget: "_self" });
   };
 
