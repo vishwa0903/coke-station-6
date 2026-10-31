@@ -1,0 +1,52 @@
+/* Coke Station — size overrides.
+   Kept in its own file so index.css stays untouched. Phones keep their
+   current layout; only the landing page grows everywhere, and the
+   dashboards/menu are scaled up on laptop-sized screens. */
+
+/* ---------- First (landing) page: bigger on every screen ---------- */
+.landing-large {
+  padding-top: clamp(24px, 6vh, 72px);
+}
+.landing-large .mini-cup {
+  transform: scale(1.6);
+  transform-origin: center bottom;
+  margin-bottom: 28px;
+}
+.landing-large .auth-brand h1 {
+  font-size: clamp(2.8rem, 9vw, 4.4rem) !important;
+  line-height: 1.05 !important;
+}
+.landing-large .auth-brand p {
+  font-size: clamp(1.05rem, 3vw, 1.4rem) !important;
+}
+.landing-large .phone-badge {
+  font-size: clamp(0.95rem, 2.6vw, 1.2rem) !important;
+  padding: 12px 22px !important;
+}
+.landing-large .who-label {
+  font-size: clamp(1.1rem, 3vw, 1.5rem) !important;
+}
+.landing-large .auth-choice {
+  width: min(92vw, 520px) !important;
+  gap: 14px !important;
+}
+.landing-large .auth-choice button {
+  font-size: clamp(1.05rem, 3vw, 1.3rem) !important;
+  min-height: 64px !important;
+  padding: 16px 24px !important;
+}
+
+/* ---------- Dashboards & menu: larger on laptop/desktop screens ---------- */
+@media (min-width: 900px) {
+  .owner-header,
+  .owner-dashboard-main {
+    zoom: 1.2;
+  }
+  .student-header,
+  .student-hero,
+  .hostel-bar,
+  .student-search-bar,
+  .student-menu-area {
+    zoom: 1.15;
+  }
+}

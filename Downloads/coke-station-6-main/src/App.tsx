@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import type { Session as SupabaseSession } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import QRCode from "qrcode";
+import "./overrides.css";
 
 const SHOP_NAME = "Coke Station";
 type Screen = "landing" | "student-login" | "student-register" | "forgot-password" | "student-menu" | "owner-pin" | "owner-dashboard";
@@ -273,12 +274,55 @@ function getStudentStatusNotification(order: Order): StudentNotification | null 
 }
 
 function MiniCup() { return <span className="mini-cup"><i /><b /></span>; }
-function Brand({ owner = false, student = true, studentName = "Vishwa S" }: { owner?: boolean; student?: boolean; studentName?: string }) { return <div className="legacy-brand"><MiniCup /><div><strong>Coke Station</strong><small>{owner ? "OWNER DASHBOARD" : student ? `👋 ${studentName.toUpperCase()}` : "Hostel Night Canteen"}</small></div></div>; }
+// Online payments go through Cashfree. Set VITE_ONLINE_PAYMENT_ENABLED=false
+// in Vercel to hide "Pay online" (e.g. while Cashfree KYC is still pending and
+// only test payments would work). Anything else leaves it switched on.
+const ONLINE_PAYMENT_ENABLED = import.meta.env.VITE_ONLINE_PAYMENT_ENABLED !== "false";
+
+// Calls one of our Supabase Edge Functions the official way, so the student's
+// login token and API key are attached automatically, and returns a readable
+// error message instead of a generic "non-2xx status code".
+async function callEdgeFunction<T>(name: string, body: Record<string, unknown>): Promise<T> {
+  if (!supabase) throw new Error("Cloud backend is not configured.");
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    let message = error.message;
+    const context = (error as { context?: Response }).context;
+    if (context && typeof context.json === "function") {
+      try {
+        const payload = await context.json();
+        if (payload && typeof payload.error === "string") message = payload.error;
+      } catch { /* keep the default message */ }
+    }
+    throw new Error(message);
+  }
+  return data as T;
+}
+
+// Product photo that never shows a broken-image icon: if the link fails
+// (blocked, deleted, or over the host's bandwidth limit) it falls back to the
+// placeholder. no-referrer also lets photos hosted on other websites load,
+// since many of them refuse requests that carry our site as the referrer.
+function ProductImage({ src, alt }: { src?: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  if (!src || failed) return <div className="product-image-placeholder"><Icon name="image" size={26} /></div>;
+  return <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+}
+
+// Shop photo for the About Us popup. Put the picture in the project's public
+// folder as shop.jpg; until it's there the popup simply shows the text.
+function AboutShopPhoto() {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return <img src="/shop.jpg" alt="SJ FOODS shop" onError={() => setFailed(true)} style={{ width: "100%", maxHeight: "240px", objectFit: "cover", borderRadius: "14px", display: "block", marginBottom: "14px" }} />;
+}
+function Brand({ owner = false, student = true, studentName = "Vishwa S" }: { owner?: boolean; student?: boolean; studentName?: string }) { return <div className="legacy-brand"><MiniCup /><div><strong style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.1, letterSpacing: "0.2px" }}>Coke Station</strong><small>{owner ? "OWNER DASHBOARD" : student ? `👋 ${studentName.toUpperCase()}` : "Hostel Night Canteen"}</small></div></div>; }
 function Modal({ title, subtitle, onClose, children, wide = false, className = "" }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode; wide?: boolean; className?: string }) { return <div className="dark-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className={`dark-modal ${wide ? "wide" : ""} ${className}`}><div className="dark-modal-header"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="dark-close" onClick={onClose}><Icon name="close" size={17} /></button></div>{children}</div></div>; }
 function PrimaryButton({ children, onClick, type = "button", className = "", disabled = false }: { children: ReactNode; onClick?: () => void; type?: "button" | "submit"; className?: string; disabled?: boolean }) { return <button type={type} onClick={onClick} disabled={disabled} className={`red-button ${className}`}>{children}</button>; }
 
 function Landing({ onStudent, onOwner }: { onStudent: () => void; onOwner: () => void }) {
-  return <div className="auth-page"><div className="auth-brand"><MiniCup /><h1>Coke Station</h1><p>Hostel Night Canteen · Open 7PM onwards</p><span className="phone-badge">📱 &nbsp;Phone + Password Login</span></div><div className="who-label">Who are you?</div><div className="auth-choice"><PrimaryButton onClick={onStudent}>🎓 Student Login <Icon name="arrow" size={17} /></PrimaryButton><button className="owner-login-button" onClick={onOwner}>🏪 Shop Owner Login <Icon name="arrow" size={17} /></button></div></div>;
+  return <div className="auth-page landing-large"><div className="auth-brand"><MiniCup /><h1>Coke Station</h1><p>Hostel Night Canteen · Open 7PM onwards</p><span className="phone-badge">📱 &nbsp;Phone + Password Login</span></div><div className="who-label">Who are you?</div><div className="auth-choice"><PrimaryButton onClick={onStudent}>🎓 Student Login <Icon name="arrow" size={17} /></PrimaryButton><button className="owner-login-button" onClick={onOwner}>🏪 Shop Owner Login <Icon name="arrow" size={17} /></button></div></div>;
 }
 
 function Login({ owner, register, onBack, onSuccess, onRegister, onStudentAuth, onForgotPassword }: { owner?: boolean; register?: boolean; onBack: () => void; onSuccess: (value?: string) => void; onRegister?: () => void; onStudentAuth?: (input: StudentAuthInput) => Promise<void>; onForgotPassword?: () => void }) {
@@ -316,7 +360,7 @@ function Login({ owner, register, onBack, onSuccess, onRegister, onStudentAuth, 
 function StudentHeader({ onHistory, onLogout, onCart, onProfile, studentName, cartCount, cartTotal, theme, onToggleTheme }: { onHistory: () => void; onLogout: () => void; onCart: () => void; onProfile: () => void; studentName: string; cartCount: number; cartTotal: number; theme: "dark" | "light"; onToggleTheme: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>ℹ️ About Us</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div>{aboutOpen && <Modal title="ℹ️ About Us" onClose={() => setAboutOpen(false)}><div className="profile-view"><div className="profile-detail-card"><strong style={{ fontSize: "18px" }}>SJ FOODS</strong><span>NIT Trichy, Tanjore Main Road, NH67, near BHEL, Tiruchirappalli, Tamil Nadu 620015</span></div></div></Modal>}</header>;
+  return <header className="student-header"><div className="student-header-inner"><Brand studentName={studentName} /><div className="student-header-actions"><button className={`student-cart ${cartCount > 0 ? "has-items" : ""}`} onClick={onCart}><Icon name="cart" size={18} /><span>{cartCount > 0 ? `${cartCount} · ${money(cartTotal)}` : "Cart"}</span></button><button className="kebab-button" onClick={() => setMenuOpen(!menuOpen)}>⋮</button>{menuOpen && <div className="header-dropdown"><button className="drop-selected" onClick={onHistory}>📋 Order History</button><button onClick={onProfile}>👤 Profile</button><button onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>ℹ️ About Us</button><button onClick={onToggleTheme}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button onClick={onLogout}>🚪 Logout</button></div>}</div></div>{aboutOpen && <Modal title="ℹ️ About Us" onClose={() => setAboutOpen(false)}><div className="profile-view"><AboutShopPhoto /><div className="profile-detail-card"><strong style={{ fontSize: "18px" }}>SJ FOODS</strong><span>NIT Trichy, Tanjore Main Road, NH67, near BHEL, Tiruchirappalli, Tamil Nadu 620015</span></div></div></Modal>}</header>;
 }
 
 function StudentStatusNotification({ notification, onClose }: { notification: StudentNotification | null; onClose: () => void }) {
@@ -324,12 +368,12 @@ function StudentStatusNotification({ notification, onClose }: { notification: St
   return <div className={`student-status-notification ${notification.tone}`} role="status" aria-live="polite"><div className="student-status-icon">{notification.emoji}</div><div className="student-status-copy"><strong>{notification.title}</strong><span>{notification.message}</span></div><button className="student-status-close" onClick={onClose} aria-label="Dismiss notification">×</button></div>;
 }
 
-function StudentProduct({ product, quantity, onAdd, onQuantity }: { product: MenuItem; quantity: number; onAdd: (item: MenuItem) => void; onQuantity: (id: string, delta: number) => void }) { return <article className={`student-product ${quantity > 0 ? "in-cart" : ""} ${!product.available ? "sold-out" : ""}`}><div className="student-product-copy"><b>{product.name}</b>{product.description && <p className="product-description">{product.description}</p>}{!product.available && <span className="stock-badge">OUT OF STOCK</span>}<span>{product.size}</span><strong>{money(product.price)}</strong>{!product.available ? <button className="product-add" disabled>Out of Stock</button> : quantity > 0 ? <div className="product-stepper"><button aria-label={`Remove one ${product.name}`} onClick={() => onQuantity(product.id, -1)}><Icon name="minus" size={13} /></button><span>{quantity}</span><button aria-label={`Add one ${product.name}`} onClick={() => onQuantity(product.id, 1)}><Icon name="plus" size={13} /></button></div> : <button className="product-add" onClick={() => onAdd(product)}>+ Add</button>}</div><div className="product-image-frame">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} loading="lazy" /> : <div className="product-image-placeholder"><Icon name="image" size={26} /></div>}</div></article>; }
+function StudentProduct({ product, quantity, onAdd, onQuantity }: { product: MenuItem; quantity: number; onAdd: (item: MenuItem) => void; onQuantity: (id: string, delta: number) => void }) { return <article className={`student-product ${quantity > 0 ? "in-cart" : ""} ${!product.available ? "sold-out" : ""}`}><div className="student-product-copy"><b>{product.name}</b>{product.description && <p className="product-description">{product.description}</p>}{!product.available && <span className="stock-badge">OUT OF STOCK</span>}<span>{product.size}</span><strong>{money(product.price)}</strong>{!product.available ? <button className="product-add" disabled>Out of Stock</button> : quantity > 0 ? <div className="product-stepper"><button aria-label={`Remove one ${product.name}`} onClick={() => onQuantity(product.id, -1)}><Icon name="minus" size={13} /></button><span>{quantity}</span><button aria-label={`Add one ${product.name}`} onClick={() => onQuantity(product.id, 1)}><Icon name="plus" size={13} /></button></div> : <button className="product-add" onClick={() => onAdd(product)}>+ Add</button>}</div><div className="product-image-frame"><ProductImage src={product.imageUrl} alt={product.name} /></div></article>; }
 function CartModal({ cart, onQuantity, onClose, onCheckout }: { cart: { item: MenuItem; quantity: number }[]; onQuantity: (id: string, delta: number) => void; onClose: () => void; onCheckout: () => void }) {
   const total = cart.reduce((sum, row) => sum + row.item.price * row.quantity, 0);
   const minimumRemaining = Math.max(0, MINIMUM_ORDER - total);
   const minimumReached = total >= MINIMUM_ORDER;
-  return <Modal title="🛒 Cart" subtitle={`${cart.reduce((sum, row) => sum + row.quantity, 0)} item(s) in your order`} onClose={onClose}><div className="cart-modal-body">{cart.length === 0 ? <div className="center-empty"><Icon name="cart" size={30} /><h3>Your cart is empty</h3><p>Add something from the menu first.</p></div> : <>{cart.map((row) => <div className="cart-row" key={row.item.id}><span className="cart-row-emoji">{row.item.imageUrl ? <img src={row.item.imageUrl} alt={row.item.name} /> : row.item.emoji}</span><div><b>{row.item.name}</b><small>{row.item.size}</small><div className="quantity-stepper"><button onClick={() => onQuantity(row.item.id, -1)} aria-label={row.quantity === 1 ? `Remove ${row.item.name}` : "Decrease quantity"} className={row.quantity === 1 ? "stepper-remove" : ""}>{row.quantity === 1 ? <Icon name="trash" size={12} /> : <Icon name="minus" size={12} />}</button><span>{row.quantity}</span><button onClick={() => onQuantity(row.item.id, 1)} aria-label="Increase quantity"><Icon name="plus" size={12} /></button></div></div><strong>{money(row.item.price * row.quantity)}</strong></div>)}<div className="cart-total"><span>Total</span><b>{money(total)}</b></div><div className={`cart-minimum-order ${minimumReached ? "reached" : ""}`} role="status"><span className="cart-minimum-icon">🛒</span><div><strong>Minimum order: {money(MINIMUM_ORDER)}</strong><small>{minimumReached ? "Minimum reached. You can continue to checkout." : `Add items worth ${money(minimumRemaining)} to place an order.`}</small></div></div><PrimaryButton className="full-width" onClick={onCheckout} disabled={!minimumReached}>Continue to checkout <Icon name="arrow" size={16} /></PrimaryButton></>}</div></Modal>;
+  return <Modal title="🛒 Cart" subtitle={`${cart.reduce((sum, row) => sum + row.quantity, 0)} item(s) in your order`} onClose={onClose}><div className="cart-modal-body">{cart.length === 0 ? <div className="center-empty"><Icon name="cart" size={30} /><h3>Your cart is empty</h3><p>Add something from the menu first.</p></div> : <>{cart.map((row) => <div className="cart-row" key={row.item.id}><span className="cart-row-emoji">{row.item.imageUrl ? <ProductImage src={row.item.imageUrl} alt={row.item.name} /> : row.item.emoji}</span><div><b>{row.item.name}</b><small>{row.item.size}</small><div className="quantity-stepper"><button onClick={() => onQuantity(row.item.id, -1)} aria-label={row.quantity === 1 ? `Remove ${row.item.name}` : "Decrease quantity"} className={row.quantity === 1 ? "stepper-remove" : ""}>{row.quantity === 1 ? <Icon name="trash" size={12} /> : <Icon name="minus" size={12} />}</button><span>{row.quantity}</span><button onClick={() => onQuantity(row.item.id, 1)} aria-label="Increase quantity"><Icon name="plus" size={12} /></button></div></div><strong>{money(row.item.price * row.quantity)}</strong></div>)}<div className="cart-total"><span>Total</span><b>{money(total)}</b></div><div className={`cart-minimum-order ${minimumReached ? "reached" : ""}`} role="status"><span className="cart-minimum-icon">🛒</span><div><strong>Minimum order: {money(MINIMUM_ORDER)}</strong><small>{minimumReached ? "Minimum reached. You can continue to checkout." : `Add items worth ${money(minimumRemaining)} to place an order.`}</small></div></div><PrimaryButton className="full-width" onClick={onCheckout} disabled={!minimumReached}>Continue to checkout <Icon name="arrow" size={16} /></PrimaryButton></>}</div></Modal>;
 }
 
 function ProfileModal({ profile, onClose, onChangePassword }: { profile: StudentProfile; onClose: () => void; onChangePassword: () => void }) {
@@ -501,7 +545,7 @@ function CheckoutModal({ cart, profile, upiId, initialHostel = "", onClose, onPl
       <div className="upi-redirect-wait"><div className="upi-redirect-spinner" /><p>Preparing your <b>{money(total)}</b> payment via Cashfree.</p></div>
     </Modal>;
   }
-  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button><button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button></div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">You'll be taken to a secure Cashfree checkout for <b>{money(total)}</b>.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : payment === "UPI" ? `Pay ${money(total)} online` : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
+  return <Modal title="Place your order" subtitle="Your order will be sent to the shop owner." onClose={onClose}><form className="checkout-old" onSubmit={submit}><div className="old-fields"><label className="wide-label"><span>HOSTEL</span><select value={hostel} onChange={(event) => setHostel(event.target.value)} required><HostelOptions /></select></label><label className="wide-label"><span>PHONE NUMBER</span><input value={displayPhone(profile.phone)} readOnly /></label></div><h3>Payment method</h3><div className="old-payment-choice"><button type="button" className={payment === "COD" ? "active" : ""} onClick={() => setPayment("COD")}>💵 Cash on delivery {payment === "COD" && <Icon name="check" size={15} />}</button>{ONLINE_PAYMENT_ENABLED && <button type="button" className={payment === "UPI" ? "active" : ""} onClick={() => { setPayment("UPI"); setUpiApp("Google Pay"); }}>📱 Pay online {payment === "UPI" && <Icon name="check" size={15} />}</button>}</div>{payment === "UPI" && <div className="upi-app-section"><span className="upi-app-label">CHOOSE YOUR UPI APP</span><div className="upi-app-grid">{apps.map((app) => <button type="button" key={app.name} className={upiApp === app.name ? "active" : ""} onClick={() => setUpiApp(app.name)}><span className={`upi-app-icon upi-${app.name.toLowerCase().replace(" ", "-")}`}>{app.icon}</span><span>{app.name}</span>{upiApp === app.name && <Icon name="check" size={14} />}</button>)}</div><p className="upi-app-help">You'll be taken to a secure Cashfree checkout for <b>{money(total)}</b>.</p></div>}{error && <p className="checkout-error">{error}</p>}<div className="old-checkout-total"><span>Total</span><b>{money(total)}</b></div><PrimaryButton type="submit" className="full-width" disabled={placing}>{placing ? "Placing order…" : payment === "UPI" ? `Pay ${money(total)} online` : "Place order"} {!placing && <Icon name="arrow" size={16} />}</PrimaryButton></form></Modal>;
 }
 function OrderPlacedModal({ order, onClose }: { order: Order; onClose: () => void }) {
   return <Modal title="✅ Order placed" subtitle="Your order has been sent to the shop owner." onClose={onClose}>
@@ -523,7 +567,7 @@ function StudentHistory({ orders, studentId, studentPhone, onClose }: { orders: 
   const deliveryLabel = (status: Order["status"]) => status === "Out for Delivery" ? "Out for Delivery" : status;
   return <Modal title="🧾 My Order History" subtitle="What you ordered, when you ordered and how much you spent" onClose={onClose} wide className="student-history-modal"><div className="student-history-content"><div className="student-history-summary"><div><span>🧾</span><small>TOTAL ORDERS</small><strong>{historyOrders.length}</strong></div><div><span>💰</span><small>TOTAL SPENT</small><strong className="history-total-green">{money(totalSpent)}</strong></div><div><span>💳</span><small>ONLINE PAID</small><strong className="history-total-blue">{money(onlinePaid)}</strong></div><div><span>💵</span><small>COD PAID</small><strong className="history-total-orange">{money(codPaid)}</strong></div></div><p className="student-history-note">Spending totals include only payments confirmed by the shop owner.</p><div className="student-history-list">{historyOrders.map((order) => <article className={`student-history-card history-status-${order.status.toLowerCase().replace(/\s+/g, "-")}`} key={order.id}><div className="history-card-top"><div><strong>🏠 {order.hostel || "Hostel not set"}</strong><span>📅 {fullDateTime(order.createdAt)}</span><small>{order.id}</small></div><div className="history-card-amount"><strong>{money(order.total)}</strong><span className={`history-payment-status ${order.paymentStatus.toLowerCase()}`}>{paymentLabel(order.paymentStatus)}</span></div></div><div className="history-item-pills">{order.items.map((item) => <span key={`${order.id}-${item.name}`}>{item.name.includes("Maggie") ? "🍜" : "🍽️"} {item.name} × {item.quantity}</span>)}</div><div className="history-card-bottom"><span className={`history-payment-method ${order.payment.toLowerCase()}`}>{order.payment === "COD" ? "💵 Cash on Delivery" : `💳 Online Payment${order.upiApp ? ` · ${order.upiApp}` : ""}`}</span><span className={`history-delivery-status ${order.status.toLowerCase().replace(/\s+/g, "-")}`}>{order.status === "Delivered" ? "✅" : order.status === "Cancelled" ? "✕" : "⏱️"} {deliveryLabel(order.status)}</span></div></article>)}{historyOrders.length === 0 && <div className="center-empty student-history-empty"><Icon name="history" size={30} /><h3>No orders yet</h3><p>Your orders will appear here after you place them.</p></div>}</div></div></Modal>;
 }
-function OwnerHeader({ onMenu, menuOpen, onCloseMenu, shopOpen, shiftStartedAt, newOrderCount, theme, onToggleTheme }: { onMenu: () => void; menuOpen: boolean; onCloseMenu: () => void; shopOpen: boolean; shiftStartedAt: string; newOrderCount: number; theme: "dark" | "light"; onToggleTheme: () => void }) { return <header className="owner-header"><div className="owner-header-brand"><MiniCup /><div><strong>Coke Station</strong><span>OWNER DASHBOARD</span><small>📅 {dashboardDate(new Date().toISOString())}</small><em>Shift started {dashboardDate(shiftStartedAt)} · {clock(shiftStartedAt)}</em></div></div><div className="owner-header-actions">{newOrderCount > 0 && <span className="new-order-pill">{newOrderCount} new {newOrderCount === 1 ? "order" : "orders"}</span>}<span className={`owner-live-dot ${shopOpen ? "" : "closed"}`} /><button className="owner-kebab" onClick={onMenu}>⋮</button>{menuOpen && <OwnerActionMenu shopOpen={shopOpen} onClose={onCloseMenu} theme={theme} onToggleTheme={onToggleTheme} />}</div></header>; }
+function OwnerHeader({ onMenu, menuOpen, onCloseMenu, shopOpen, shiftStartedAt, newOrderCount, theme, onToggleTheme }: { onMenu: () => void; menuOpen: boolean; onCloseMenu: () => void; shopOpen: boolean; shiftStartedAt: string; newOrderCount: number; theme: "dark" | "light"; onToggleTheme: () => void }) { return <header className="owner-header"><div className="owner-header-brand"><MiniCup /><div><strong style={{ fontSize: "clamp(22px, 5vw, 30px)", lineHeight: 1.1, letterSpacing: "0.2px" }}>Coke Station</strong><span>OWNER DASHBOARD</span><small>📅 {dashboardDate(new Date().toISOString())}</small><em>Shift started {dashboardDate(shiftStartedAt)} · {clock(shiftStartedAt)}</em></div></div><div className="owner-header-actions">{newOrderCount > 0 && <span className="new-order-pill">{newOrderCount} new {newOrderCount === 1 ? "order" : "orders"}</span>}<span className={`owner-live-dot ${shopOpen ? "" : "closed"}`} /><button className="owner-kebab" onClick={onMenu}>⋮</button>{menuOpen && <OwnerActionMenu shopOpen={shopOpen} onClose={onCloseMenu} theme={theme} onToggleTheme={onToggleTheme} />}</div></header>; }
 function OwnerActionMenu({ onClose, shopOpen, theme, onToggleTheme }: { onClose: () => void; shopOpen: boolean; theme: "dark" | "light"; onToggleTheme: () => void }) { return <div className="owner-action-menu"><button className={shopOpen ? "shop-menu-green" : "shop-menu-closed"} onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-shop")); onClose(); }}>{shopOpen ? "🟢 Shop Open" : "🔴 Shop Closed"}</button><button className="menu-menu-green" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-menu")); onClose(); }}>🍽️ Menu List</button><button className="menu-menu-blue" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-payment")); onClose(); }}>💳 Online Payment<br />Update</button><button className="menu-menu-orange" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-scratch")); onClose(); }}>🧹 Scratch</button><button className="menu-menu-blue" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-open-history")); onClose(); }}>📊 History</button><button className="menu-menu-gray" onClick={() => { onToggleTheme(); onClose(); }}>{theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}</button><button className="menu-menu-gray" onClick={() => { window.dispatchEvent(new CustomEvent("legacy-logout")); onClose(); }}>🚪 Logout</button></div>; }
 
 function StatCard({ icon, title, value, helper, color }: { icon: string; title: string; value: string; helper: string; color: string }) { return <div className={`owner-stat-card ${color}`}><span className="stat-emoji">{icon}</span><small>{title}</small><strong>{value}</strong><em>{helper}</em></div>; }
@@ -560,7 +604,7 @@ function OwnerOrders({ orders, paymentSettings, onPayment, onReject, onAdvance, 
       <div className="owner-order-items old-items">{order.items.map((item) => <span key={item.name}>{item.quantity}× {item.name}</span>)}</div>
       {order.status !== "Delivered" && order.status !== "Cancelled" && <div className="old-call-row"><a className="call-student-link" href={telHref(order.phone)} onClick={() => onCall(order.phone)}>📞 Call Student</a><span>{order.phone}</span></div>}
       {(order.status === "Ready" || order.status === "Out for Delivery") && <div className="old-delivery-details"><div className="old-delivery-heading">🚚 DELIVERY DETAILS</div><div className="old-delivery-grid"><span>🏠 <b>{order.hostel}</b></span><span>👤 <b>{order.student}</b></span><span>📞 <b>{order.phone}</b></span><span>{order.payment === "COD" ? "💵" : "💳"} <b>{order.payment === "COD" ? "Cash on Delivery" : "Online payment"}</b></span></div></div>}
-      <div className="old-owner-actions">{onlinePaymentPending && <button className="confirm-payment" onClick={() => onPayment(order.id, "UPI")}>✓ Accept order</button>}{onlinePaymentNeedsDecision && <button className="reject-order-button" onClick={() => onReject(order.id)}>✕ Reject order</button>}{!onlinePaymentNeedsDecision && order.status === "New" && <button className="old-next new-next" onClick={() => onAdvance(order.id)}>→ Mark as Preparing</button>}{order.status === "Preparing" && <button className="old-next preparing-next" onClick={() => onAdvance(order.id)}>→ Mark as Ready</button>}{order.status === "Ready" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Ready" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{(order.status === "Ready" || order.status === "Out for Delivery") && !activeFlow && (hostelLocation?.latitude !== undefined && hostelLocation.longitude !== undefined ? <button className="navigate-hostel-button" type="button" onClick={() => openHostelDirections(hostelLocation, onNavigate)}>📍 Navigate to {order.hostel}</button> : <span className="no-navigation">📍 No location for {order.hostel}</span>)}</div>
+      <div className="old-owner-actions">{onlinePaymentNeedsDecision && <small className="payment-pending" style={{ width: "100%", opacity: 0.85 }}>⏳ {order.paymentStatus === "Failed" ? "The last online payment attempt failed — the student may retry." : "Waiting for the student to finish paying online."} It confirms automatically once paid.</small>}{onlinePaymentPending && <button className="confirm-payment" onClick={() => onPayment(order.id, "UPI")}>✓ I received the payment</button>}{onlinePaymentNeedsDecision && <button className="reject-order-button" onClick={() => onReject(order.id)}>✕ Cancel order</button>}{!onlinePaymentNeedsDecision && order.status === "New" && <button className="old-next new-next" onClick={() => onAdvance(order.id)}>→ Mark as Preparing</button>}{order.status === "Preparing" && <button className="old-next preparing-next" onClick={() => onAdvance(order.id)}>→ Mark as Ready</button>}{order.status === "Ready" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Ready" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && !needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => onAdvance(order.id)}>🚚 Mark as Delivered</button>}{order.status === "Out for Delivery" && needsPayment && !activeFlow && <button className="old-next delivered-next" onClick={() => beginDelivery(order)}>🚚 Mark as Delivered</button>}{(order.status === "Ready" || order.status === "Out for Delivery") && !activeFlow && (hostelLocation?.latitude !== undefined && hostelLocation.longitude !== undefined ? <button className="navigate-hostel-button" type="button" onClick={() => openHostelDirections(hostelLocation, onNavigate)}>📍 Navigate to {order.hostel}</button> : <span className="no-navigation">📍 No location for {order.hostel}</span>)}</div>
       {activeFlow && activeFlow.step === "choose" && <div className="delivery-payment-panel choose-payment"><strong>💳 Collect payment from the student first</strong><button className="cash-received-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "cash", error: "" })}>💵 Cash Received</button><button className="pay-online-button" onClick={() => setDeliveryFlow({ ...activeFlow, step: "online", error: "" })}>📱 Pay Online (UPI / QR)</button><button className="flow-cancel" onClick={() => setDeliveryFlow(null)}>Cancel</button></div>}
       {activeFlow && activeFlow.step === "cash" && <div className="delivery-payment-panel cash-payment"><strong>💵 Cash Received — enter the exact amount</strong><div className="cash-entry"><span>₹</span><input type="number" min="0" value={activeFlow.cashAmount} onChange={(event) => setDeliveryFlow({ ...activeFlow, cashAmount: event.target.value, error: "" })} /><button onClick={confirmCash}>✓ Confirm Cash Received</button></div>{activeFlow.error && <p className="payment-flow-error">{activeFlow.error}</p>}<button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
       {activeFlow && activeFlow.step === "online" && <div className="delivery-payment-panel online-payment"><strong>📱 Pay Online — show this to the student</strong><div className="delivery-online-body"><UpiPaymentQr upiId={paymentSettings.upiId} amount={order.total} /><div><span>AMOUNT TO COLLECT</span><b>{money(order.total)}</b><span>UPI ID</span><strong>{paymentSettings.upiId}</strong></div></div><button className="confirm-online-button" onClick={confirmOnline}>✓ Confirm Online Payment Received</button><button className="flow-back" onClick={() => setDeliveryFlow({ ...activeFlow, step: "choose", error: "" })}>← Back</button></div>}
@@ -978,7 +1022,7 @@ export default function App() {
     activeAccountKey.current = accountKey;
     setCart(cartByAccount[accountKey] || []);
   }, [accountKey]);
-  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2800); return () => window.clearTimeout(timer); }, [toast]);
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 4500); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { if (!studentNotification) return; const timer = window.setTimeout(() => setStudentNotification(null), 5600); return () => window.clearTimeout(timer); }, [studentNotification?.id]);
   useEffect(() => {
     const client = supabase;
@@ -1081,22 +1125,37 @@ export default function App() {
     return () => { cancelled = true; authListener.subscription.unsubscribe(); };
   }, []);
 
-  // Handle the browser returning from Cashfree's hosted checkout page. We
-  // set ?cf_order_ref=<our order id> in the Edge Function's return_url, so
-  // if it's present the student just came back from a real payment
-  // attempt. We never trust this on its own to mark anything as paid —
-  // that only ever happens via the Cashfree webhook writing straight to
-  // the database — this is purely a "welcome back, checking your order"
-  // UI touch, and the URL is cleaned up immediately so a refresh/share
-  // can't replay it.
+  // When the student comes back from Cashfree's checkout page the URL carries
+  // ?cf_order_ref=<our order id>. We never take that as proof of payment — we
+  // ask our own backend (which asks Cashfree directly) what really happened,
+  // then tell the student the truth. An abandoned payment is cancelled so it
+  // doesn't sit in the owner's list as a phantom order.
+  const [returnedOrderRef, setReturnedOrderRef] = useState<string | null>(() => {
+    try { return new URLSearchParams(window.location.search).get("cf_order_ref"); } catch { return null; }
+  });
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const returnedOrderRef = params.get("cf_order_ref");
-    if (!returnedOrderRef) return;
-    window.history.replaceState({}, "", window.location.pathname);
-    notify("Payment received — confirming your order…");
+    if (returnedOrderRef) window.history.replaceState({}, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => {
+    if (!returnedOrderRef || !profile.id) return;
+    let cancelled = false;
+    const confirmReturnedPayment = async () => {
+      try {
+        const result = await callEdgeFunction<{ outcome: "paid" | "processing" | "not_paid" }>("verify-cashfree-payment", { order_ref: returnedOrderRef });
+        if (cancelled) return;
+        if (result.outcome === "paid") notify("✓ Payment successful — your order is confirmed");
+        else if (result.outcome === "processing") notify("Your payment is still processing — we'll confirm it in a moment");
+        else notify("Payment was not completed, so no order was placed. You can try again.");
+      } catch {
+        if (!cancelled) notify("Couldn't confirm the payment yet — check Order History in a minute");
+      } finally {
+        if (!cancelled) setReturnedOrderRef(null);
+      }
+    };
+    void confirmReturnedPayment();
+    return () => { cancelled = true; };
+  }, [returnedOrderRef, profile.id]);
 
   const handleStudentAuth = async (input: StudentAuthInput) => {
     const phone = normalizeIndianPhone(input.phone);
@@ -1287,25 +1346,28 @@ export default function App() {
   // trustworthy instead of self-reported.
   const payOnline = async (details: { hostel: string; phone: string; payment: PaymentMethod; upiApp?: UpiApp }) => {
     if (!supabase) throw new Error("Cloud backend is not configured. Online payment needs Supabase.");
+    const cartSnapshot = cart;
     const savedOrder = await insertOrder(details);
+    // If this fails, the backend cancels the half-created order itself and the
+    // cart is untouched, so the student can simply retry or choose Cash on Delivery.
+    const session = await callEdgeFunction<{ payment_session_id?: string; mode?: string }>("create-cashfree-order", { order_ref: savedOrder.id });
+    if (!session.payment_session_id) throw new Error("Could not start online payment. Please try Cash on Delivery instead.");
     setOrders((current) => [savedOrder, ...current]);
+    // Clear the basket BEFORE leaving for Cashfree, so coming back after paying
+    // can never lead to paying for the same items twice.
     setCart([]);
-    setCheckoutOpen(false);
-    const functionsBase = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
-    if (!functionsBase) throw new Error("VITE_SUPABASE_URL is not set — cannot reach the payment function.");
-    const response = await fetch(`${functionsBase}/functions/v1/create-cashfree-order`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order_ref: savedOrder.id }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.payment_session_id) {
-      throw new Error(payload.error || "Could not start online payment. Please try Cash on Delivery instead.");
+    try {
+      const { load: loadCashfree } = await import("@cashfreepayments/cashfree-js");
+      // The backend tells us which mode its keys are in (TEST keys => sandbox),
+      // so switching to live later only needs the Supabase secrets changed.
+      const cashfree = await loadCashfree({ mode: session.mode === "production" ? "production" : "sandbox" });
+      const result = await cashfree.checkout({ paymentSessionId: session.payment_session_id as string, redirectTarget: "_self" });
+      if (result && result.error) throw new Error(result.error.message || "The payment page could not be opened.");
+    } catch (caught) {
+      setCart(cartSnapshot);
+      void callEdgeFunction("verify-cashfree-payment", { order_ref: savedOrder.id }).catch(() => undefined);
+      throw caught instanceof Error ? caught : new Error("The payment page could not be opened.");
     }
-    const { load: loadCashfree } = await import("@cashfreepayments/cashfree-js");
-    // TODO: switch mode to "production" once you've gone live with Cashfree.
-    const cashfree = await loadCashfree({ mode: "production"});
-    await cashfree.checkout({ paymentSessionId: payload.payment_session_id, redirectTarget: "_self" });
   };
 
   const scratch = async () => {
